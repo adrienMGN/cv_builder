@@ -1,0 +1,81 @@
+.draggable-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 15px;
+  background: #f9f9f9;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  transition: all 0.2s ease;
+  cursor: default;
+}
+
+.draggable-item:hover {
+  border-color: #1a73e8;
+  background: #f5f8ff;
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.1);
+}
+
+.draggable-item.dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+  border-style: dashed;
+}
+
+.drag-handle-wrapper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 5px;
+  cursor: grab;
+}
+
+.drag-handle-wrapper:active {
+  cursor: grabbing;
+}
+
+.drag-handle {
+  color: #999;
+  transition: color 0.2s;
+  pointer-events: none;
+}
+
+.draggable-item:hover .drag-handle {
+  color: #1a73e8;
+}
+
+.draggable-content {
+  flex: 1;
+  display: flex;
+  cursor: text;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.draggable-content input,
+.draggable-content textarea,
+.draggable-content .rich-text-editor {
+  width: 100%;
+}
+
+.btn-delete-draggable {
+  flex-shrink: 0;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #dc3545;
+  transition: all 0.2s;
+  height: fit-content;
+}
+
+.btn-delete-draggable:hover {
+  background: #dc3545;
+  color: white;
+  border-color: #dc3545;
+  transform: scale(1.05);
+}

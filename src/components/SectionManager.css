@@ -1,0 +1,80 @@
+.section-manager {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+}
+
+.section-manager h3 {
+  margin: 0 0 15px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.section-item:hover {
+  background: #f0f0f0;
+  border-color: #ccc;
+}
+
+.section-item.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.drag-handle-container {
+  flex-shrink: 0;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+}
+
+.drag-handle-container:active {
+  cursor: grabbing;
+}
+
+.drag-handle {
+  color: #999;
+  pointer-events: none;
+}
+
+.section-name {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+}
+
+.visibility-btn {
+  padding: 6px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.visibility-btn:hover {
+  background: #e8e8e8;
+  border-color: #999;
+}
