@@ -76,8 +76,15 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .header-actions {
@@ -343,20 +350,34 @@ body {
   .no-print {
     display: none !important;
   }
-  
+
   body {
     background: white;
   }
-  
+
+  .app {
+    background: white;
+  }
+
+  /* Cacher l'éditeur lors de l'impression */
+  .editor-container {
+    display: none !important;
+  }
+
   .main-container {
     display: block;
     padding: 0;
+    margin: 0;
+    max-width: 100%;
   }
-  
+
   .preview-container {
     box-shadow: none;
     padding: 0;
     height: auto;
+    position: static;
+    margin: 0;
+    border-radius: 0;
   }
 }
 
@@ -380,13 +401,13 @@ body {
   .main-container {
     grid-template-columns: 1fr;
   }
-  
+
   .preview-container {
     position: relative;
     height: auto;
     top: 0;
   }
-  
+
   .editor-container {
     max-height: none;
   }
@@ -396,11 +417,11 @@ body {
   .app-header {
     padding: 1rem;
   }
-  
+
   .header-actions {
     width: 100%;
   }
-  
+
   .main-container {
     padding: 1rem;
   }
@@ -423,6 +444,13 @@ body {
 }
 
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

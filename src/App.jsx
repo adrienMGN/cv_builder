@@ -8,7 +8,7 @@ import Register from './components/Auth/Register'
 import CVList from './components/CVList'
 import { Download, Printer, Save, Upload, FileJson, Undo, Redo, Moon, Sun, FileText, Copy, LogOut, ArrowLeft } from 'lucide-react'
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://localhost:5001';
 
 const initialData = {
   personalInfo: {
@@ -81,11 +81,11 @@ function App() {
     const saved = localStorage.getItem('cvData');
     return saved ? JSON.parse(saved) : initialData;
   });
-  
+
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('theme') || 'blue';
   });
-  
+
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
     return saved ? JSON.parse(saved) : false;
@@ -102,7 +102,7 @@ function App() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
-    
+
     if (token && savedUser) {
       try {
         setUser(JSON.parse(savedUser));
@@ -118,16 +118,16 @@ function App() {
   useEffect(() => {
     if (!isUndoRedoAction.current && historyIndex >= 0) {
       localStorage.setItem('cvData', JSON.stringify(cvData));
-      
+
       setSaveIndicator(true);
       const timer = setTimeout(() => setSaveIndicator(false), 2000);
-      
+
       const newHistory = history.slice(0, historyIndex + 1);
       newHistory.push(JSON.parse(JSON.stringify(cvData)));
       if (newHistory.length > 50) newHistory.shift();
       setHistory(newHistory);
       setHistoryIndex(newHistory.length - 1);
-      
+
       return () => clearTimeout(timer);
     }
     isUndoRedoAction.current = false;
@@ -149,7 +149,7 @@ function App() {
     try {
       setAutoSaveStatus('💾 Sauvegarde...');
       const token = localStorage.getItem('token');
-      
+
       const response = await fetch(`${API_URL}/api/cv/${currentCVId}`, {
         method: 'PUT',
         headers: {
@@ -163,7 +163,7 @@ function App() {
       });
 
       if (!response.ok) throw new Error('Erreur de sauvegarde');
-      
+
       setAutoSaveStatus('✓ Sauvegardé');
       setTimeout(() => setAutoSaveStatus(''), 2000);
     } catch (error) {
@@ -217,7 +217,7 @@ function App() {
 
   const handleCreateNew = async () => {
     const newCVData = { ...initialData };
-    
+
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/api/cv`, {
@@ -257,12 +257,12 @@ function App() {
 
   if (!user) {
     return authMode === 'login' ? (
-      <Login 
-        onLogin={handleLogin} 
+      <Login
+        onLogin={handleLogin}
         onSwitchToRegister={() => setAuthMode('register')}
       />
     ) : (
-      <Register 
+      <Register
         onRegister={handleRegister}
         onSwitchToLogin={() => setAuthMode('login')}
       />

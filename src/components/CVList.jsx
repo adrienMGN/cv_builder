@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './CVList.css';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://localhost:5001';
 
 export default function CVList({ onSelectCV, onCreateNew, user }) {
   const [cvs, setCvs] = useState([]);
@@ -34,7 +34,7 @@ export default function CVList({ onSelectCV, onCreateNew, user }) {
 
   const handleDelete = async (id, e) => {
     e.stopPropagation();
-    
+
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce CV ?')) return;
 
     try {
@@ -94,7 +94,7 @@ export default function CVList({ onSelectCV, onCreateNew, user }) {
               <div className="cv-card-content">
                 <div className="cv-card-header">
                   <h3>{cv.name}</h3>
-                  <button 
+                  <button
                     onClick={(e) => handleDelete(cv._id, e)}
                     className="btn-delete"
                     title="Supprimer"
