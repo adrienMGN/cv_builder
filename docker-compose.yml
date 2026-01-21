@@ -14,6 +14,11 @@ services:
       - backend
     environment:
       - VITE_API_URL=http://localhost:5001
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "3"
 
   # Backend API
   backend:
@@ -32,6 +37,11 @@ services:
       - JWT_SECRET=change-this-super-secret-key-in-production-123456789
       - NODE_ENV=production
       - CV_LIFETIME_MINUTES=300 # 24 heures par exemple
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "3"
 
   # MongoDB
   mongo:
@@ -44,6 +54,11 @@ services:
       - mongo-data:/data/db
     environment:
       - MONGO_INITDB_DATABASE=cvbuilder
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "2"
 
   # Mongo Express - Interface Web MongoDB
   mongo-express:
@@ -60,6 +75,11 @@ services:
       - ME_CONFIG_BASICAUTH_PASSWORD=admin123
     depends_on:
       - mongo
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "2"
 
 volumes:
   mongo-data:
