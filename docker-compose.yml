@@ -31,6 +31,7 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/cvbuilder
       - JWT_SECRET=change-this-super-secret-key-in-production-123456789
       - NODE_ENV=production
+      - CV_LIFETIME_MINUTES=300 # 24 heures par exemple
 
   # MongoDB
   mongo:
