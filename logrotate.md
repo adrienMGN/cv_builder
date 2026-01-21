@@ -1,6 +1,11 @@
 # Logrotate - Oscar
 
+Le logrotate ou rotation de logs permet de ne pas saturer son disque avec les fichiers de loggings.
+Limiter la taille individuelle des fichiers de logs permet également de rendre moins gourmande les opérations d'écritures (même l'ajout d'une ligne), très fréquentes sur ce type de fichiers.
+
 ## Configuration
+
+Le logrotate ou rotation de logs permet de ne pas saturer son disque avec les fichirs de loggings
 
 La rotation de log utilise le Logging Driver de Docker en mode 'json-file'
 Elle est donc configurée dans `docker-compose.yml` :
@@ -18,6 +23,8 @@ logging:
 Dans ce cas, dès que le fichier de log dépasse 2 MB il est renommé id-cont.log.1
 L'ancien id-cont.log.1 est renommé id-cont.log.2
 L'ancien id-cont.log.2 est supprimé.
+
+Il est possible de compresser automatiquement les fichiers de logs intermédiaires avec `compress: "true"`, ce n'est pas pertinent dans notre cas étant donné le faible volume de données.
 
 ## Proof of Concept
 
