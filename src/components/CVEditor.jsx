@@ -212,11 +212,11 @@ const CVEditor = ({ cvData, setCvData }) => {
       customSections: cvData.customSections.map(section =>
         section.id === sectionId
           ? {
-              ...section,
-              items: section.items.map(item =>
-                item.id === itemId ? { ...item, [field]: value } : item
-              )
-            }
+            ...section,
+            items: section.items.map(item =>
+              item.id === itemId ? { ...item, [field]: value } : item
+            )
+          }
           : section
       )
     })
@@ -242,7 +242,7 @@ const CVEditor = ({ cvData, setCvData }) => {
     const baseOrder = cvData.sectionOrder || [
       'summary', 'experience', 'education', 'skills', 'languages', 'certifications', 'customSections'
     ];
-    
+
     return baseOrder.map(key => ({
       key,
       label: {
@@ -271,12 +271,12 @@ const CVEditor = ({ cvData, setCvData }) => {
   const handleExpDragOver = (e, index) => {
     e.preventDefault();
     if (draggedExpIndex === null || draggedExpIndex === index) return;
-    
+
     const items = [...cvData.experience];
     const draggedItem = items[draggedExpIndex];
     items.splice(draggedExpIndex, 1);
     items.splice(index, 0, draggedItem);
-    
+
     setCvData({ ...cvData, experience: items });
     setDraggedExpIndex(index);
   };
@@ -293,12 +293,12 @@ const CVEditor = ({ cvData, setCvData }) => {
   const handleEduDragOver = (e, index) => {
     e.preventDefault();
     if (draggedEduIndex === null || draggedEduIndex === index) return;
-    
+
     const items = [...cvData.education];
     const draggedItem = items[draggedEduIndex];
     items.splice(draggedEduIndex, 1);
     items.splice(index, 0, draggedItem);
-    
+
     setCvData({ ...cvData, education: items });
     setDraggedEduIndex(index);
   };
@@ -315,12 +315,12 @@ const CVEditor = ({ cvData, setCvData }) => {
   const handleCertDragOver = (e, index) => {
     e.preventDefault();
     if (draggedCertIndex === null || draggedCertIndex === index) return;
-    
+
     const items = [...cvData.certifications];
     const draggedItem = items[draggedCertIndex];
     items.splice(draggedCertIndex, 1);
     items.splice(index, 0, draggedItem);
-    
+
     setCvData({ ...cvData, certifications: items });
     setDraggedCertIndex(index);
   };
@@ -337,7 +337,7 @@ const CVEditor = ({ cvData, setCvData }) => {
 
   const handleCustomItemDragOver = (sectionId, index) => {
     if (draggedCustomItemIndex === null || draggedCustomItemIndex === index || draggedCustomItemSection !== sectionId) return;
-    
+
     const sections = cvData.customSections.map(section => {
       if (section.id === sectionId) {
         const items = [...section.items];
@@ -349,7 +349,7 @@ const CVEditor = ({ cvData, setCvData }) => {
       }
       return section;
     });
-    
+
     setCvData({ ...cvData, customSections: sections });
   };
 
@@ -369,7 +369,7 @@ const CVEditor = ({ cvData, setCvData }) => {
       />
 
       <section className="editor-section">
-        <h3>Paramètres d'affichage</h3>
+        <h3>Paramètres d&apos;affichage</h3>
         <div className="settings-grid">
           <label className="toggle-setting">
             <input
@@ -393,7 +393,7 @@ const CVEditor = ({ cvData, setCvData }) => {
               checked={cvData.settings.showExperience}
               onChange={() => toggleSetting('showExperience')}
             />
-            <span>Afficher l'expérience</span>
+            <span>Afficher l&apos;expérience</span>
           </label>
           <label className="toggle-setting">
             <input
@@ -424,7 +424,7 @@ const CVEditor = ({ cvData, setCvData }) => {
 
       <section className="editor-section">
         <h3>Informations Personnelles</h3>
-        
+
         <div className="photo-upload-section">
           <h4>Photo de profil</h4>
           {cvData.personalInfo.photo ? (
@@ -435,8 +435,8 @@ const CVEditor = ({ cvData, setCvData }) => {
               </button>
             </div>
           ) : (
-            <button 
-              onClick={() => photoInputRef.current?.click()} 
+            <button
+              onClick={() => photoInputRef.current?.click()}
               className="btn-upload-photo"
             >
               <Upload size={16} /> Ajouter une photo
