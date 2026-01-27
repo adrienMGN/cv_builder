@@ -1,0 +1,46 @@
+---
+- name: Préparation et installation de Kubernetes
+  hosts: all
+  become: yes
+  tasks:
+    - name: Désactiver le swap (requis pour K8s)
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Installer les dépendances système
+      apt:
+        name: [apt-transport-https, ca-certificates, curl, gpg]
+        state: present
+        update_cache: yes
+
+    - name: Ajouter la clé GPG de Kubernetes
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Ajouter le dépôt Kubernetes
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        state: present
+
+    - name: Installer kubelet, kubeadm et kubectl
+      apt:
+        name: [kubelet, kubeadm, kubectl]
+        state: present
+        update_cache: yes
+
+    - name: Bloquer la version des paquets K8s (évite les updates surprises)
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubelet, kubeadm, kubectl]
+
+- name: Initialisation du Master
+  hosts: master
+  become: yes
+  tasks:
+    - name: Initialiser le cluster avec kubeadm
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16
+      args:
+        creates: /etc/kubernetes/admin.conf
