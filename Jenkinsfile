@@ -1,0 +1,57 @@
+pipeline {
+    agent {
+        docker {
+            image 'node:20-alpine'
+            args '-u root:root'
+        }
+    }
+
+    environment {
+        CI = 'true'
+    }
+
+    stages {
+        stage('Install Dependencies') {
+            steps {
+                echo 'Installing Frontend Dependencies...'
+                sh 'npm install'
+                
+                echo 'Installing Backend Dependencies...'
+                dir('backend') {
+                    sh 'npm install'
+                }
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                echo 'Linting Frontend...'
+                sh 'npm run lint'
+                
+                echo 'Linting Backend...'
+                dir('backend') {
+                    sh 'npm run lint'
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Testing Frontend...'
+                sh 'npm test'
+                
+                echo 'Testing Backend...'
+                dir('backend') {
+                    sh 'npm test'
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                echo 'Building Frontend...'
+                sh 'npm run build'
+            }
+        }
+    }
+}

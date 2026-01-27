@@ -11,6 +11,10 @@ RUN npm install
 # Copier le code source
 COPY . .
 
+# Arguments de build
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+
 # Build de l'application
 RUN npm run build
 
