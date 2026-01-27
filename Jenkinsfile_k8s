@@ -1,0 +1,59 @@
+pipeline {
+    agent any
+
+    environment {
+        // ID du credential SSH configuré dans Jenkins pour se connecter aux futurs nœuds K8s
+        ANSI_SSH_CREDS = 'k8s-nodes-ssh-key'
+        // Chemin vers l'inventaire Ansible (peut être un fichier dans votre repo Git)
+        INVENTORY_PATH = '/var/home/workspace/cv_builder/host.ini'
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                // Récupère vos playbooks et fichiers d'inventaire depuis Git
+                checkout scm
+            }
+        }
+
+        stage('Install Ansible Dependencies') {
+            steps {
+                sh '''
+                    # Optionnel : Installation des dépendances si vous utilisez Kubespray
+                    # pip install -r requirements.txt
+                    ansible-galaxy collection install -r requirements.yml
+                '''
+            }
+        }
+
+        stage('Provision Kubernetes Cluster') {
+            steps {
+                ansiblePlaybook(
+                    playbook: 'provisioning/cluster.yml',
+                    inventory: "${INVENTORY_PATH}",
+                    credentialsId: "${ANSI_SSH_CREDS}",
+                    // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
+                    extraVars: [
+                        ansible_user: 'ubuntu',
+                        ansible_become: true // Pour exécuter en sudo
+                    ],
+                    installation: 'ansible-default', // Nom configuré dans Global Tool Configuration
+                    colorized: true
+                )
+            }
+        }
+
+        stage('Verify Cluster') {
+            steps {
+                // Vérifie que le cluster répond bien à la fin
+                sh "export KUBECONFIG=./inventory/my-cluster/artifacts/admin.conf && kubectl get nodes"
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
