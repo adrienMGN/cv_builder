@@ -1,14 +1,9 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-echo "🔍 Running linters before push..."
+echo "Lint pre-push husky..."
 
-# Lint frontend
-echo "📦 Linting frontend..."
 npm run lint || exit 1
-
-# Lint backend
-echo "⚙️  Linting backend..."
 cd backend && npm run lint || exit 1
 
-echo "✅ All linters passed!"
+echo "Husky OK"
