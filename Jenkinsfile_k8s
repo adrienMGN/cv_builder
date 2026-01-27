@@ -5,7 +5,7 @@ pipeline {
         // ID du credential SSH configuré dans Jenkins pour se connecter aux futurs nœuds K8s
         ANSI_SSH_CREDS = 'k8s-nodes-ssh-key'
         // Chemin vers l'inventaire Ansible (peut être un fichier dans votre repo Git)
-        INVENTORY_PATH = '/var/home/workspace/provisioning/hosts.ini'
+        INVENTORY_PATH = '/var/jenkins_home/workspace/provisioning/hosts.ini'
     }
 
     stages {
@@ -29,7 +29,7 @@ pipeline {
         stage('Provision Kubernetes Cluster') {
             steps {
                 ansiblePlaybook(
-                    playbook: '/var/home/workspace/provisioning/cluster.yml',
+                    playbook: '/var/jenkins_home/workspace/provisioning/cluster.yml',
                     inventory: "${INVENTORY_PATH}",
                     credentialsId: "${ANSI_SSH_CREDS}",
                     // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
