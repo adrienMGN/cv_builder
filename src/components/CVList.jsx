@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './CVList.css';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
 export default function CVList({ onSelectCV, onCreateNew, user }) {
   const [cvs, setCvs] = useState([]);
