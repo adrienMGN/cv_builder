@@ -8,7 +8,7 @@ import Register from './components/Auth/Register'
 import CVList from './components/CVList'
 import { Download, Printer, Save, Upload, FileJson, Undo, Redo, Moon, Sun, FileText, Copy, LogOut, ArrowLeft } from 'lucide-react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+const API_URL = 'http://localhost:5001';
 
 const initialData = {
   personalInfo: {

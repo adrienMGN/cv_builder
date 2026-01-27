@@ -13,8 +13,7 @@ services:
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://vps-82ecffcd.vps.ovh.net:5001
-      # Sur le VPS, change par : http://TON_IP:5001 ou https://api.ton-domaine.com
+      - VITE_API_URL=http://localhost:5001
     logging:
       driver: "json-file"
       options:
@@ -37,8 +36,7 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/cvbuilder
       - JWT_SECRET=change-this-super-secret-key-in-production-123456789
       - NODE_ENV=production
-      - CV_LIFETIME_MINUTES=10 # temps en minutes avant suppression d'un CV
-      - ALLOWED_ORIGINS=http://vps-82ecffcd.vps.ovh.net:3000,http://localhost:3000,http://localhost:5173
+      - CV_LIFETIME_MINUTES=300 # 24 heures par exemple
     logging:
       driver: "json-file"
       options:
