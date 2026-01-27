@@ -29,7 +29,7 @@ pipeline {
         stage('Provision Kubernetes Cluster') {
             steps {
                 ansiblePlaybook(
-                    playbook: 'provisioning/cluster.yml',
+                    playbook: '/var/home/workspace/provisioning/cluster.yml',
                     inventory: "${INVENTORY_PATH}",
                     credentialsId: "${ANSI_SSH_CREDS}",
                     // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
