@@ -1,7 +1,17 @@
 ---
+- name: Installation de Python sur les nœuds
+  hosts: all
+  gather_facts: no  # On désactive la collecte car Python n'est pas encore là
+  become: yes
+  tasks:
+    - name: Installer Python3 via raw (sans dépendance Python)
+      raw: apt-get update && apt-get install -y python3
+      changed_when: false
+
 - name: Préparation et installation de Kubernetes
   hosts: all
   become: yes
+  # Ici, on laisse gather_facts par défaut (yes) car Python sera installé
   tasks:
     - name: Désactiver le swap (requis pour K8s)
       command: swapoff -a
