@@ -29,6 +29,7 @@ pipeline {
 
         stage('Provision Kubernetes Cluster') {
             steps {
+                sh 'ansible --version'
                 ansiblePlaybook(
                     playbook: '/var/jenkins_home/workspace/provisioning/cluster.yml',
                     credentialsId: "${ANSI_SSH_CREDS}",
