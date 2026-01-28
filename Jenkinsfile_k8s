@@ -34,7 +34,7 @@ pipeline {
                     credentialsId: "${ANSI_SSH_CREDS}",
                     // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
                     extraVars: [
-                        ansible_user: 'ubuntu',
+                        ansible_user: 'baltroo',
                         ansible_become: true // Pour exécuter en sudo
                     ],
                     installation: 'ansible-default', // Nom configuré dans Global Tool Configuration
