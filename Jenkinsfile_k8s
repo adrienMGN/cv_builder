@@ -7,7 +7,6 @@ pipeline {
         // Chemin vers l'inventaire Ansible (peut être un fichier dans votre repo Git)
         INVENTORY_PATH = '/var/jenkins_home/workspace/provisioning/hosts.ini'
         //récuperation du mdp du serveur distant
-        SUDO_PASS = 'baltroo_mdp"
     }
 
     stages {
@@ -36,8 +35,6 @@ pipeline {
                     // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
                     extraVars: [
                         ansible_become: true // Pour exécuter en sudo
-                        nsible_become_method: 'sudo',
-                        ansible_become_password: "${SUDO_PASS}"
                     ],
                     installation: 'ansible-default', // Nom configuré dans Global Tool Configuration
                     colorized: true
