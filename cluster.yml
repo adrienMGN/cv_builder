@@ -94,3 +94,18 @@
       command: kubeadm init --pod-network-cidr=10.244.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
+        
+- name: Vérification du Cluster
+  hosts: master
+  become: yes
+  tasks:
+    - name: Attendre que les nœuds soient prêts
+      shell: kubectl get nodes
+      register: nodes_output
+      until: '" Ready " in nodes_output.stdout'
+      retries: 5
+      delay: 10
+
+    - name: Afficher l'état des nœuds
+      debug:
+        var: nodes_output.stdout_lines
