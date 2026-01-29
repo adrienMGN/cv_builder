@@ -1,60 +1,48 @@
 ---
-# ============================================================
-# ÉTAPE 1 : BOOTSTRAP PYTHON
-# Nécessaire pour que les modules Ansible fonctionnent ensuite
-# ============================================================
-- name: Bootstrap - Installation de Python sur tous les nœuds
+- name: Bootstrap - Installation de Python et Nettoyage APT
   hosts: all
   gather_facts: no
   become: yes
   tasks:
-    - name: Installer Python3 via raw (communication SSH directe)
-      raw: apt-get update && apt-get install -y python3
+    - name: Nettoyer les conflits APT et installer Python
+      # On supprime les fichiers responsables du blocage avant de lancer l'update
+      raw: |
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc && \
+        rm -f /etc/apt/sources.list.d/kubernetes.list && \
+        apt-get update && \
+        apt-get install -y python3
       changed_when: false
 
-# ============================================================
-# ÉTAPE 2 : CONFIGURATION COMMUNE (MASTER & WORKERS)
-# Prépare le système, le réseau et installe les paquets
-# ============================================================
 - name: Préparation et installation des composants Kubernetes
   hosts: all
   become: yes
   tasks:
-    ## --- Nettoyage des conflits (Correction erreur Jenkins) --- ##
-    - name: Supprimer l'ancienne configuration GPG et dépôts pour éviter les conflits
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-        - /etc/apt/sources.list.d/kubernetes.list
-
-    ## --- Optimisation Système & Swap --- ##
-    - name: Désactiver le swap (Requis par K8s)
+    - name: Désactiver le swap
       command: swapoff -a
       when: ansible_facts['swaptotal_mb'] > 0
       changed_when: true
 
-    - name: Commenter l'entrée swap dans /etc/fstab (Persistance au reboot)
+    - name: Commenter le swap dans fstab
       replace:
         path: /etc/fstab
         regexp: '^([^#].*?\sswap\s+.*)$'
         replace: '# \1'
 
-    - name: Créer le fichier de configuration des modules noyau
+    - name: Configurer modules noyau
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Charger les modules immédiatement
+    - name: Charger modules
       modprobe:
         name: "{{ item }}"
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Paramétrage Sysctl pour le réseau Pod
+    - name: Sysctl reseau
       sysctl:
         name: "{{ item.key }}"
         value: "{{ item.value }}"
@@ -66,45 +54,43 @@
         - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { key: 'net.ipv4.ip_forward', value: '1' }
 
-    ## --- Installation des paquets --- ##
-    - name: Installer les dépendances APT
+    - name: Dépendances APT
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg]
         state: present
         update_cache: yes
 
-    - name: Créer le répertoire pour les clés APT
+    - name: Re-créer le répertoire keyrings
       file:
         path: /etc/apt/keyrings
         state: directory
         mode: '0755'
 
-    - name: Télécharger la clé GPG Kubernetes officielle
+    - name: Télécharger clé K8s
       get_url:
         url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
         dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
         mode: '0644'
 
-    - name: Ajouter le dépôt Kubernetes stable (v1.29)
+    - name: Ajouter dépôt K8s
       apt_repository:
         repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
         state: present
         filename: kubernetes
 
-    - name: Installer les outils K8s et Containerd
+    - name: Installer K8s et Containerd
       apt:
         name: [kubelet, kubeadm, kubectl, containerd]
         state: present
         update_cache: yes
 
-    - name: Bloquer les versions des paquets (Hold)
+    - name: Hold paquets
       dpkg_selections:
         name: "{{ item }}"
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-    ## --- Configuration Containerd --- ##
-    - name: Générer la config Containerd avec SystemdCgroup
+    - name: Config Containerd
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
@@ -118,43 +104,37 @@
         state: restarted
         enabled: yes
 
-# ============================================================
-# ÉTAPE 3 : INITIALISATION DU MASTER
-# ============================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Initialiser le Master (si pas déjà fait)
+    - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Configurer kubectl pour l'utilisateur root
+    - name: Dossier .kube
       file:
         path: /root/.kube
         state: directory
         mode: '0755'
 
-    - name: Copier la config admin.conf vers .kube/config
+    - name: Config kubectl root
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /root/.kube/config
         remote_src: yes
 
-    - name: Installer le plugin réseau Pod (Flannel)
+    - name: Plugin Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_out
       changed_when: "'created' in flannel_out.stdout"
 
-# ============================================================
-# ÉTAPE 4 : VÉRIFICATION
-# ============================================================
-- name: Vérification du Cluster
+- name: Verification
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que le Master soit prêt
+    - name: Attente Master Ready
       shell: kubectl get nodes | grep "Ready"
       register: result
       until: result.rc == 0
@@ -162,10 +142,10 @@
       delay: 10
       changed_when: false
 
-    - name: État final des nœuds
+    - name: Afficher noeuds
       shell: kubectl get nodes
       register: final_status
 
-    - name: Afficher le résultat
+    - name: Résultat
       debug:
         var: final_status.stdout_lines
