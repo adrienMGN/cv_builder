@@ -1,91 +1,121 @@
 ---
-- name: Installation de Python sur les nœuds
+# PREMIÈRE ÉTAPE : Bootstrap Python
+# Sans Python, Ansible ne peut pas utiliser ses modules standards (apt, copy, etc.)
+- name: Bootstrap - Installation de Python sur tous les nœuds
   hosts: all
-  gather_facts: no  # On désactive la collecte car Python n'est pas encore là
+  gather_facts: no  # Obligatoire car Python est absent
   become: yes
   tasks:
-    - name: Installer Python3 via raw (sans dépendance Python)
+    - name: Installer Python3 via raw (communication SSH directe)
       raw: apt-get update && apt-get install -y python3
       changed_when: false
+      # On utilise 'changed_when: false' pour éviter de marquer cette tâche 
+      # comme "changed" à chaque exécution une fois Python installé.
 
-- name: Préparation et installation de Kubernetes
+# DEUXIÈME ÉTAPE : Configuration commune
+- name: Préparation et installation des composants Kubernetes
   hosts: all
   become: yes
-  # Ici, on laisse gather_facts par défaut (yes) car Python sera installé
   tasks:
-    - name: Désactiver le swap (requis pour K8s)
+    ## --- Section Système --- ##
+
+    - name: Désactiver le swap (Requis pour la stabilité de Kubelet)
       command: swapoff -a
       when: ansible_swaptotal_mb > 0
+      changed_when: true
 
-    - name: Installer les dépendances système
-      apt:
-        name: [apt-transport-https, ca-certificates, curl, gpg]
-        state: present
-        update_cache: yes
+    - name: Supprimer définitivement le swap du fichier /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+.*)$'
+        replace: '# \1'
 
-    - name: Ajouter la clé GPG de Kubernetes
-      shell: |
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-      args:
-        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-    - name: Ajouter le dépôt Kubernetes
-      apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
-        state: present
-
-    - name: Installer kubelet, kubeadm et kubectl
-      apt:
-        name: [kubelet, kubeadm, kubectl]
-        state: present
-        update_cache: yes
-
-    - name: Bloquer la version des paquets K8s (évite les updates surprises)
-      dpkg_selections:
-        name: "{{ item }}"
-        selection: hold
-      loop: [kubelet, kubeadm, kubectl]
-
-    - name: Charger les modules du noyau requis par K8s
+    - name: Charger les modules du noyau au démarrage
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Appliquer les modules immédiatement
-      command: modprobe {{ item }}
+    - name: Charger les modules immédiatement
+      modprobe:
+        name: "{{ item }}"
+        state: present
       loop: [overlay, br_netfilter]
 
-    - name: Configurer les paramètres sysctl pour le réseau K8s
-      copy:
-        dest: /etc/sysctl.d/k8s.conf
-        content: |
-          net.bridge.bridge-nf-call-iptables  = 1
-          net.bridge.bridge-nf-call-ip6tables = 1
-          net.ipv4.ip_forward                 = 1
-
-    - name: Appliquer les changements sysctl
-      command: sysctl --system
-
-    - name: Installer containerd
-      apt:
-        name: containerd
+    - name: Configurer les paramètres sysctl pour le réseau (IP Forwarding)
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
         state: present
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: yes
+      loop:
+        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { key: 'net.ipv4.ip_forward', value: '1' }
 
-    - name: Générer la configuration par défaut de containerd
+    ## --- Section Paquets & Dépôts --- ##
+
+    - name: Installer les outils de base
+      apt:
+        name: [apt-transport-https, ca-certificates, curl, gnupg]
+        state: present
+        update_cache: yes
+
+    - name: Créer le répertoire pour les clés de dépôts
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Ajouter la clé GPG de Kubernetes (version 1.29)
+      get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: '0644'
+        force: yes
+
+    - name: Ajouter le dépôt officiel Kubernetes
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        state: present
+        filename: kubernetes
+
+    - name: Installer la suite Kubernetes et Runtime
+      apt:
+        name: [kubelet, kubeadm, kubectl, containerd]
+        state: present
+        update_cache: yes
+
+    - name: Empêcher la mise à jour automatique des composants K8s
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubelet, kubeadm, kubectl]
+
+    ## --- Section Containerd Configuration --- ##
+
+    - name: Créer le dossier de config containerd
+      file:
+        path: /etc/containerd
+        state: directory
+
+    - name: Configurer containerd avec SystemdCgroup
       shell: |
-        mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
       notify: Restart containerd
+      # On utilise shell uniquement ici car la commande 'config default' est spécifique
 
   handlers:
     - name: Restart containerd
       service:
         name: containerd
         state: restarted
+        enabled: yes
 
+# TROISIÈME ÉTAPE : Le Control Plane (Master)
 - name: Initialisation du Master
   hosts: master
   become: yes
@@ -93,19 +123,38 @@
     - name: Initialiser le cluster avec kubeadm
       command: kubeadm init --pod-network-cidr=10.244.0.0/16
       args:
-        creates: /etc/kubernetes/admin.conf
-        
+        creates: /etc/kubernetes/admin.conf # Ne s'exécute pas si le fichier existe déjà
+
+    - name: Créer le dossier .kube pour l'utilisateur root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copier la configuration admin pour kubectl
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+
+    - name: Installer le réseau Pod (Flannel par défaut ici via le CIDR 10.244)
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      register: flannel_result
+      changed_when: "'created' in flannel_result.stdout"
+
+# QUATRIÈME ÉTAPE : Santé du Cluster
 - name: Vérification du Cluster
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que les nœuds soient prêts
-      shell: kubectl get nodes
+    - name: Attendre que le nœud Master soit prêt (Ready)
+      shell: kubectl get nodes | grep "Ready"
       register: nodes_output
-      until: '" Ready " in nodes_output.stdout'
-      retries: 5
+      until: nodes_output.rc == 0
+      retries: 12
       delay: 10
+      changed_when: false
 
-    - name: Afficher l'état des nœuds
+    - name: Récapitulatif de l'état du cluster
       debug:
-        var: nodes_output.stdout_lines
+        msg: "Le Master est opérationnel et prêt à accueillir des Workers !"
