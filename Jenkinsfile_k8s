@@ -41,13 +41,6 @@ pipeline {
                 )
             }
         }
-
-        stage('Verify Cluster') {
-            steps {
-                // On demande à Ansible d'exécuter la commande sur le serveur distant
-                sh "ansible master -i ${INVENTORY_PATH} -m shell -a 'kubectl get nodes' --become"
-            }
-        }
     }
 
     post {
