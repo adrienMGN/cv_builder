@@ -5,13 +5,22 @@
   become: yes
   tasks:
     - name: Nettoyer les conflits APT et installer Python
-      # On supprime les fichiers responsables du blocage avant de lancer l'update
       raw: |
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc && \
-        rm -f /etc/apt/sources.list.d/kubernetes.list && \
-        apt-get update && \
-        apt-get install -y python3
+        # 1. Suppression des fichiers de dépôts et clés problématiques
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        rm -f /etc/apt/sources.list.d/kubernetes.list
+        
+        # 2. Nettoyage forcé du cache APT et des verrous (locks)
+        rm -f /var/lib/apt/lists/lock
+        rm -f /var/cache/apt/archives/lock
+        rm -f /var/lib/dpkg/lock*
+        
+        # 3. Purge des listes actuelles pour forcer une reconstruction propre
+        rm -rf /var/lib/apt/lists/*
+        
+        # 4. Update et install
+        apt-get update && apt-get install -y python3
       changed_when: false
 
 - name: Préparation et installation des composants Kubernetes
