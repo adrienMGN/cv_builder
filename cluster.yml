@@ -1,25 +1,22 @@
 ---
-- name: Bootstrap - Installation de Python et Nettoyage APT
+- name: Bootstrap - Installation de Python et Nettoyage Radical APT
   hosts: all
   gather_facts: no
   become: yes
   tasks:
-    - name: Nettoyer les conflits APT et installer Python
+    - name: Nettoyer toute trace de Kubernetes et installer Python
       raw: |
-        # 1. Suppression des fichiers de dépôts et clés problématiques
+        # 1. On cherche et on supprime TOUT fichier contenant 'kubernetes' dans les sources APT
+        find /etc/apt/ -name "*.list" -exec grep -l "kubernetes" {} + | xargs rm -f
+        
+        # 2. On nettoie les clés GPG (anciennes et nouvelles) pour repartir de zéro
         rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc
-        rm -f /etc/apt/sources.list.d/kubernetes.list
         
-        # 2. Nettoyage forcé du cache APT et des verrous (locks)
-        rm -f /var/lib/apt/lists/lock
-        rm -f /var/cache/apt/archives/lock
-        rm -f /var/lib/dpkg/lock*
-        
-        # 3. Purge des listes actuelles pour forcer une reconstruction propre
+        # 3. Nettoyage radical du cache APT (on vide les listes)
         rm -rf /var/lib/apt/lists/*
         
-        # 4. Update et install
+        # 4. Maintenant, l'update ne DOIT PLUS voir de dépôt Kubernetes
         apt-get update && apt-get install -y python3
       changed_when: false
 
