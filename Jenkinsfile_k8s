@@ -43,9 +43,11 @@ pipeline {
         }
 
         stage('Verify Cluster') {
-            steps {
-                // Vérifie que le cluster répond bien à la fin
-                sh "export KUBECONFIG=./inventory/my-cluster/artifacts/admin.conf && kubectl get nodes"
+            stage('Verify Cluster') {
+                steps {
+                    // On demande à Ansible d'exécuter la commande sur le serveur distant
+                    sh "ansible master -i ${INVENTORY_PATH} -m shell -a 'kubectl get nodes' --become"
+                }
             }
         }
     }
