@@ -1,15 +1,14 @@
 ---
-- name: Bootstrap - Installation de Python et Nettoyage Radical APT
+- name: Bootstrap - Installation de Python et Nettoyage de l'enfer APT
   hosts: all
   gather_facts: no
   become: yes
   tasks:
-    - name: Nettoyer toute trace de Kubernetes et installer Python
+    - name: Nettoyage total et installation Python
       raw: >
         sed -i '/kubernetes/d' /etc/apt/sources.list &&
-        rm -f /etc/apt/sources.list.d/kubernetes.list &&
-        rm -f /etc/apt/sources.list.d/archive_uri-https_pkgs_k8s_io_core_stable_v1_29_deb-trixie.list &&
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.* &&
+        rm -rf /etc/apt/sources.list.d/* &&
+        rm -rf /etc/apt/keyrings/* &&
         rm -rf /var/lib/apt/lists/* &&
         apt-get update &&
         apt-get install -y python3
