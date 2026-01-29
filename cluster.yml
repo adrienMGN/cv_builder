@@ -5,19 +5,13 @@
   become: yes
   tasks:
     - name: Nettoyer toute trace de Kubernetes et installer Python
-      raw: |
-        # 1. On cherche et on supprime TOUT fichier contenant 'kubernetes' dans les sources APT
-        find /etc/apt/ -name "*.list" -exec grep -l "kubernetes" {} + | xargs rm -f
-        
-        # 2. On nettoie les clés GPG (anciennes et nouvelles) pour repartir de zéro
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc
-        
-        # 3. Nettoyage radical du cache APT (on vide les listes)
-        rm -rf /var/lib/apt/lists/*
-        
-        # 4. Maintenant, l'update ne DOIT PLUS voir de dépôt Kubernetes
-        apt-get update && apt-get install -y python3
+      raw: >
+        rm -f /etc/apt/sources.list.d/kubernetes.list &&
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg &&
+        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.asc &&
+        rm -rf /var/lib/apt/lists/* &&
+        apt-get update &&
+        apt-get install -y python3
       changed_when: false
 
 - name: Préparation et installation des composants Kubernetes
