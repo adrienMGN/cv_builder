@@ -47,11 +47,11 @@
       loop: [kubelet, kubeadm, kubectl]
 
     - name: Charger les modules du noyau requis par K8s
-        copy:
-          dest: /etc/modules-load.d/k8s.conf
-          content: |
-            overlay
-            br_netfilter
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
 
     - name: Appliquer les modules immédiatement
       command: modprobe {{ item }}
