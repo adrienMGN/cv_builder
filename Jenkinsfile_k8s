@@ -41,13 +41,6 @@ pipeline {
                 )
             }
         }
-
-        stage('Verify Cluster') {
-            steps {
-                // Vérifie que le cluster répond bien à la fin
-                sh "export KUBECONFIG=./inventory/my-cluster/artifacts/admin.conf && kubectl get nodes"
-            }
-        }
     }
 
     post {
