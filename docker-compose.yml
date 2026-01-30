@@ -41,6 +41,7 @@ services:
       - NODE_ENV=production
       - CV_LIFETIME_MINUTES=10 # temps en minutes avant suppression d'un CV
       - ALLOWED_ORIGINS=http://vps-82ecffcd.vps.ovh.net:3000,http://localhost:3000,http://localhost:5173
+      - RESEND_API_KEY=re_a7Pbgkno_EaaYV4V5FAmDfx9vUnGR1nBV
     logging:
       driver: "json-file"
       options:

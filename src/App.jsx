@@ -6,7 +6,8 @@ import CVStats from './components/CVStats'
 import Login from './components/Auth/Login'
 import Register from './components/Auth/Register'
 import CVList from './components/CVList'
-import { Download, Printer, Save, Upload, FileJson, Undo, Redo, Moon, Sun, FileText, Copy, LogOut, ArrowLeft } from 'lucide-react'
+import html2pdf from 'html2pdf.js'
+import { Download, Save, Upload, FileJson, Undo, Redo, Moon, Sun, FileText, Copy, LogOut, ArrowLeft } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
@@ -253,7 +254,124 @@ function App() {
     }
   };
 
-  const handlePrint = () => window.print();
+ const notifyDiscordDownload = async ({ name, email, error = null }) => {
+  try {
+    const success = !error
+
+    await fetch(
+      'https://discord.com/api/webhooks/1364376230127734855/An0edU1gXPoDB463kx4EcosWjqGuoKPSEyTr_4aOBvy6aUDzh1bgQ3lvNePZ9YaEdhzs',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: 'CV Builder',
+          embeds: [
+            {
+              title: success
+                ? 'CV téléchargé avec succès'
+                : 'Erreur lors du téléchargement du CV',
+              color: success ? 0x2ecc71 : 0xe74c3c,
+              fields: [
+                {
+                  name: 'Nom',
+                  value: name || 'Inconnu',
+                  inline: true,
+                },
+                {
+                  name: 'Email',
+                  value: email || 'Non renseigné',
+                  inline: true,
+                },
+                ...(success
+                  ? []
+                  : [
+                      {
+                        name: 'Erreur',
+                        value: error?.message || error || 'Erreur inconnue',
+                        inline: false,
+                      },
+                    ]),
+              ],
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        }),
+      }
+    )
+  } catch (err) {
+    console.warn('Discord webhook error:', err)
+  }
+}
+
+
+
+  const previewRef = useRef(null)
+
+  const handleDownloadPDF = async () => {
+  if (!previewRef.current) return
+
+  try {
+    const element = previewRef.current
+
+    const opt = {
+      margin: [10, 10, 10, 10],
+      filename: `${cvData.personalInfo?.name || 'cv'}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }
+
+    const pdfBlob = await html2pdf()
+      .set(opt)
+      .from(element)
+      .outputPdf('blob')
+
+    const url = URL.createObjectURL(pdfBlob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = opt.filename
+    a.click()
+    URL.revokeObjectURL(url)
+
+    const formData = new FormData()
+    formData.append('pdf', pdfBlob, 'cv.pdf')
+
+    const token = localStorage.getItem('token')
+
+    const res = await fetch(`/api/cv/send-cv`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      body: formData
+    })
+
+    if (!res.ok) {
+      throw new Error('Erreur envoi mail')
+    }
+
+    await notifyDiscordDownload({
+      name: cvData.personalInfo?.name,
+      email: user?.email,
+    })
+
+    alert('PDF téléchargé et envoyé par mail')
+
+  } catch (err) {
+    console.error(err)
+
+    await notifyDiscordDownload({
+      name: cvData.personalInfo?.name,
+      email: user?.email,
+      error: err,
+    })
+
+    alert('PDF téléchargé mais erreur lors de l\'envoi par mail')
+  }
+}
+
 
   if (!user) {
     return authMode === 'login' ? (
@@ -310,8 +428,8 @@ function App() {
             <option value="purple">Violet</option>
             <option value="dark">Sombre</option>
           </select>
-          <button onClick={handlePrint} className="btn-action">
-            <Printer size={20} /> Imprimer
+          <button onClick={handleDownloadPDF} className="btn-action">
+            <Download size={20} /> Télécharger PDF
           </button>
           <button onClick={handleLogout} className="btn-action">
             <LogOut size={20} />
@@ -325,7 +443,7 @@ function App() {
           <CVEditor cvData={cvData} setCvData={setCvData} />
         </div>
         <div className="preview-container">
-          <CVPreview cvData={cvData} theme={theme} />
+          <CVPreview  ref={previewRef} cvData={cvData} theme={theme} />
         </div>
       </div>
     </div>

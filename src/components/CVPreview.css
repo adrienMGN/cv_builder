@@ -1,226 +1,216 @@
-.cv-preview {
-  width: 210mm;
-  min-height: 297mm;
-  background: white;
-  padding: 2.5rem;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
-  border-radius: 12px;
-  font-size: 0.95rem;
-  line-height: 1.6;
+* {
+  box-sizing: border-box;
 }
 
-/* Header */
+
+.cv-preview {
+  width: 200mm;
+  height : auto;
+  background: white;
+  padding: 18mm;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+}
+
+/* ================= HEADER ================= */
+
 .cv-header {
   display: flex;
-  gap: 2rem;
+  gap: 1.2rem;
   align-items: center;
-  padding-bottom: 2rem;
-  border-bottom: 3px solid;
-  margin-bottom: 2rem;
-}
-
-.cv-photo {
-  flex-shrink: 0;
+  padding-bottom: 1.2rem;
+  margin-bottom: 1.6rem;
+  border-bottom: 2px solid;
 }
 
 .cv-photo img {
-  width: 120px;
-  height: 120px;
+  width: 95px;
+  height: 95px;
   object-fit: cover;
   border-radius: 50%;
-  border: 4px solid;
-}
-
-.cv-header-content {
-  flex: 1;
+  border: 3px solid;
 }
 
 .cv-name {
-  font-size: 2.5rem;
+  font-size: 2.1rem;
   font-weight: 700;
-  margin-bottom: 0.5rem;
-  letter-spacing: 1px;
+  margin-bottom: 0.15rem;
 }
 
 .cv-title {
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   font-weight: 500;
-  margin-bottom: 1rem;
+  margin-bottom: 0.6rem;
   opacity: 0.9;
 }
 
 .cv-contact {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-top: 1rem;
+  gap: 0.8rem 1.2rem;
+  font-size: 0.85rem;
 }
 
 .contact-item {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.9rem;
+  gap: 0.35rem;
 }
 
-.clickable-link {
-  color: inherit;
-  text-decoration: none;
-  transition: opacity 0.2s ease;
+.contact-item svg {
+  width: 15px;
+  height: 15px;
+  opacity: 0.75;
 }
 
-.clickable-link:hover {
-  opacity: 0.7;
-  text-decoration: underline;
-}
+/* ================= SECTIONS ================= */
 
-@media print {
-  .clickable-link {
-    color: inherit !important;
-    text-decoration: none !important;
-  }
-}
-
-/* Sections */
 .cv-section {
-  margin-bottom: 2rem;
+  margin-bottom: 1.6rem;
 }
 
 .section-title {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  padding-bottom: 0.5rem;
+  gap: 0.4rem;
+  margin-bottom: 0.7rem;
+  padding-bottom: 0.3rem;
   border-bottom: 2px solid;
 }
 
 .section-title h3 {
-  font-size: 1.3rem;
+  font-size: 1.15rem;
   font-weight: 600;
 }
 
-/* Summary */
-.summary-text {
-  text-align: justify;
-  line-height: 1.7;
+.section-title svg {
+  width: 17px;
+  height: 17px;
+  opacity: 0.8;
 }
 
-/* Experience */
+/* ================= SUMMARY ================= */
+
+.summary-text {
+  line-height: 1.55;
+  text-align: justify;
+}
+
+/* ================= EXPERIENCE ================= */
+
 .experience-item {
-  margin-bottom: 1.5rem;
-  padding-left: 1rem;
+  margin-bottom: 1.2rem;
+  padding-left: 0.8rem;
   border-left: 3px solid;
 }
 
 .exp-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  align-items: flex-start;
+  gap: 1rem;
 }
 
 .exp-header h4 {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  margin-bottom: 0.25rem;
 }
 
 .company {
   font-weight: 500;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .exp-meta {
+  min-width: 110px;
   text-align: right;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 
-.date {
-  font-weight: 600;
-  margin-bottom: 0.25rem;
+.exp-description {
+  margin-top: 0.4rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
-.location {
-  opacity: 0.7;
-}
+/* ================= EDUCATION ================= */
 
-.exp-description p {
-  margin-bottom: 0.4rem;
-  line-height: 1.6;
-}
-
-/* Education */
 .education-item {
-  margin-bottom: 1.25rem;
-  padding-left: 1rem;
+  margin-bottom: 1rem;
+  padding-left: 0.8rem;
   border-left: 3px solid;
 }
 
 .edu-header {
   display: flex;
   justify-content: space-between;
-}
-
-.edu-header h4 {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-.school {
-  font-weight: 500;
-  opacity: 0.8;
+  align-items: flex-start;
 }
 
 .edu-meta {
+  min-width: 90px;
   text-align: right;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
-/* Footer */
-.cv-footer {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 2rem;
-}
+/* ================= SKILLS ================= */
 
-/* Skills */
 .skills-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .skill-tag {
-  padding: 0.4rem 0.8rem;
+  padding: 0.35rem 0.7rem;
   border-radius: 6px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 500;
 }
 
-/* Languages */
+/* ================= LANGUAGES ================= */
+
 .languages-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .language-item {
   display: flex;
   justify-content: space-between;
-  padding: 0.5rem;
+  padding: 0.4rem 0.6rem;
   border-radius: 6px;
-  font-weight: 500;
+  font-size: 0.85rem;
 }
 
-.lang-level {
-  opacity: 0.8;
-  font-size: 0.9rem;
+/* ================= CERTIFICATIONS / CUSTOM ================= */
+
+.certification-item,
+.custom-item {
+  margin-bottom: 1rem;
+  padding-left: 0.8rem;
+  border-left: 3px solid;
 }
 
-/* Theme: Blue */
-.theme-blue .cv-header {
-  border-bottom-color: #3b82f6;
+.cert-header,
+.custom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.verify-link,
+.item-link-icon {
+  display: none;
+}
+
+/* ================= THEMES (inchangés) ================= */
+
+.theme-blue .cv-header,
+.theme-blue .section-title {
+  border-color: #3b82f6;
 }
 
 .theme-blue .cv-name {
@@ -231,287 +221,41 @@
   color: #3b82f6;
 }
 
-.theme-blue .cv-photo img {
-  border-color: #3b82f6;
-}
-
-.theme-blue .section-title {
-  color: #1e40af;
-  border-bottom-color: #3b82f6;
-}
-
-.theme-blue .experience-item,
-.theme-blue .education-item,
-.theme-blue .certification-item,
-.theme-blue .custom-item {
-  border-left-color: #3b82f6;
-}
-
 .theme-blue .skill-tag {
   background: #dbeafe;
   color: #1e40af;
 }
 
-.theme-blue .language-item {
-  background: #eff6ff;
-  color: #1e40af;
-}
-
-/* Theme: Green */
-.theme-green .cv-header {
-  border-bottom-color: #10b981;
-}
-
-.theme-green .cv-name {
-  color: #065f46;
-}
-
-.theme-green .cv-title {
-  color: #10b981;
-}
-
-.theme-green .cv-photo img {
+.theme-green .cv-header,
+.theme-green .section-title {
   border-color: #10b981;
 }
 
-.theme-green .section-title {
-  color: #065f46;
-  border-bottom-color: #10b981;
-}
-
-.theme-green .experience-item,
-.theme-green .education-item,
-.theme-green .certification-item,
-.theme-green .custom-item {
-  border-left-color: #10b981;
-}
-
-.theme-green .skill-tag {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.theme-green .language-item {
-  background: #ecfdf5;
-  color: #065f46;
-}
-
-/* Theme: Purple */
-.theme-purple .cv-header {
-  border-bottom-color: #a855f7;
-}
-
-.theme-purple .cv-name {
-  color: #6b21a8;
-}
-
-.theme-purple .cv-title {
-  color: #a855f7;
-}
-
-.theme-purple .cv-photo img {
+.theme-purple .cv-header,
+.theme-purple .section-title {
   border-color: #a855f7;
 }
 
-.theme-purple .section-title {
-  color: #6b21a8;
-  border-bottom-color: #a855f7;
-}
-
-.theme-purple .experience-item,
-.theme-purple .education-item,
-.theme-purple .certification-item,
-.theme-purple .custom-item {
-  border-left-color: #a855f7;
-}
-
-.theme-purple .skill-tag {
-  background: #f3e8ff;
-  color: #6b21a8;
-}
-
-.theme-purple .language-item {
-  background: #faf5ff;
-  color: #6b21a8;
-}
-
-/* Theme: Dark */
-.theme-dark .cv-header {
-  border-bottom-color: #1f2937;
-}
-
-.theme-dark .cv-name {
-  color: #111827;
-}
-
-.theme-dark .cv-title {
-  color: #374151;
-}
-
-.theme-dark .cv-photo img {
+.theme-dark .cv-header,
+.theme-dark .section-title {
   border-color: #374151;
 }
 
-.theme-dark .section-title {
-  color: #111827;
-  border-bottom-color: #374151;
-}
-
-.theme-dark .experience-item,
-.theme-dark .education-item,
-.theme-dark .certification-item,
-.theme-dark .custom-item {
-  border-left-color: #374151;
-}
-
-.theme-dark .skill-tag {
-  background: #f3f4f6;
-  color: #111827;
-}
-
-.theme-dark .language-item {
-  background: #f9fafb;
-  color: #111827;
-}
-
-/* Certifications */
-.certification-item {
-  margin-bottom: 1.25rem;
-  padding-left: 1rem;
-  border-left: 3px solid;
-}
-
-.cert-header {
-  display: flex;
-  justify-content: space-between;
-}
-
-.cert-header h4 {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-.cert-issuer {
-  font-weight: 500;
-  opacity: 0.8;
-}
-
-.cert-meta {
-  text-align: right;
-  font-size: 0.9rem;
-}
-
-.verify-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-top: 0.25rem;
-  font-size: 0.85rem;
-  opacity: 0.8;
-  cursor: pointer;
-}
-
-/* Custom Sections */
-.custom-item {
-  margin-bottom: 1.25rem;
-  padding-left: 1rem;
-  border-left: 3px solid;
-}
-
-.custom-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.custom-header h4 {
-  font-size: 1.05rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.item-link-icon {
-  opacity: 0.6;
-  transition: opacity 0.2s ease;
-}
-
-.item-link-icon:hover {
-  opacity: 1;
-}
-
-.custom-description {
-  line-height: 1.6;
-  opacity: 0.9;
-}
-
-/* Formatted text styles */
-.summary-text b,
-.exp-description b,
-.custom-description b {
-  font-weight: 700;
-}
-
-.summary-text i,
-.exp-description i,
-.custom-description i {
-  font-style: italic;
-}
-
-.summary-text u,
-.exp-description u,
-.custom-description u {
-  text-decoration: underline;
-}
-
-.summary-text,
-.exp-description,
-.custom-description {
-  line-height: 1.6;
-}
-
-/* Ensure colored text is visible in print */
-@media print {
-  .summary-text span[style*="color"],
-  .exp-description span[style*="color"],
-  .custom-description span[style*="color"] {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-}
+/* ================= PDF / PRINT ================= */
 
 @media print {
   .cv-preview {
     box-shadow: none;
     border-radius: 0;
-    width: 100%;
-    min-height: auto;
-    padding: 1.5cm;
+    padding: 15mm;
   }
 
-  .cv-header {
-    text-align: left;
-  }
-  
-  .cv-footer {
-    break-inside: avoid;
-  }
-  
-  .experience-item,
-  .education-item,
-  .certification-item,
-  .custom-item {
-    break-inside: avoid;
-  }
-
-  .verify-link,
-  .item-link-icon {
-    display: none;
+  svg {
+    display: none !important;
   }
 }
+
+/* ================= RESPONSIVE ================= */
 
 @media (max-width: 1200px) {
   .cv-preview {

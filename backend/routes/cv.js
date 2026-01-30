@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const CV = require('../models/CV');
+const { Resend } = require('resend');
+const multer = require('multer');
+const User = require('../models/User');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const upload = multer();
+
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -106,5 +113,47 @@ router.delete('/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 });
+
+router.post('/send-cv', auth, upload.single('pdf'), async (req, res) => {
+  try {
+    const pdfBuffer = req.file?.buffer;
+
+    if (!pdfBuffer) {
+      return res.status(400).json({ message: 'PDF manquant' });
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+
+    const { data, error } = await resend.emails.send({
+      from: 'CV Builder <onboarding@resend.dev>',
+      to: user.email,
+      subject: 'Votre CV en PDF',
+      html: `
+        <p>Bonjour ${user.name || ''},</p>
+        <p>Voici votre CV généré depuis <b>CV Builder</b>.</p>
+      `,
+      attachments: [
+        {
+          filename: 'cv.pdf',
+          content: pdfBuffer.toString('base64'),
+        },
+      ],
+    });
+
+    if (error) {
+      console.error('RESEND ERROR:', error);
+      return res.status(500).json({ error });
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Erreur lors de l'envoi du CV" });
+  }
+});
+
 
 module.exports = router;

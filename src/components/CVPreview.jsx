@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { forwardRef } from 'react'
 import './CVPreview.css'
 import { Mail, Phone, MapPin, Linkedin, Globe, Briefcase, GraduationCap, Code, Languages, Award, ExternalLink, Github } from 'lucide-react'
 
-const CVPreview = ({ cvData, theme }) => {
+const CVPreview = forwardRef(({ cvData, theme }, ref) => {
   const renderLink = (url, children) => {
     if (!url) return children
     const fullUrl = url.startsWith('http') ? url : `https://${url}`
@@ -178,7 +178,7 @@ const CVPreview = ({ cvData, theme }) => {
   ];
 
   return (
-    <div className={`cv-preview theme-${theme}`}>
+    <div ref={ref} className={`cv-preview theme-${theme}`}>
       {/* Header */}
       <div className="cv-header">
         {cvData.settings.showPhoto && cvData.personalInfo.photo && (
@@ -228,6 +228,6 @@ const CVPreview = ({ cvData, theme }) => {
       {sectionOrder.map(key => renderSection(key))}
     </div>
   )
-}
+})
 
 export default CVPreview
