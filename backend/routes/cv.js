@@ -128,7 +128,7 @@ router.post('/send-cv', auth, upload.single('pdf'), async (req, res) => {
     }
 
     const { data, error } = await resend.emails.send({
-      from: 'CV Builder <onboarding@resend.dev>',
+      from: 'CV Builder <noreply@firevaam.com>',
       to: user.email,
       subject: 'Votre CV en PDF',
       html: `
@@ -138,7 +138,7 @@ router.post('/send-cv', auth, upload.single('pdf'), async (req, res) => {
       attachments: [
         {
           filename: 'cv.pdf',
-          content: pdfBuffer.toString('base64'),
+          content: pdfBuffer,
         },
       ],
     });
