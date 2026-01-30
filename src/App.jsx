@@ -340,7 +340,7 @@ function App() {
 
     const token = localStorage.getItem('token')
 
-    const res = await fetch(`/api/cv/send-cv`, {
+    const res = await fetch(`${API_URL}/api/cv/send-cv`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`
