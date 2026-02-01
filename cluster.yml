@@ -104,13 +104,18 @@
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-    # 5. CONFIGURATION DU RUNTIME (Containerd)
+# 5. CONFIGURATION DU RUNTIME (Containerd)
     - name: Initialiser la configuration par défaut de Containerd
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
-        # Activation du SystemdCgroup pour l'alignement avec Kubelet
-        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+      # On sépare le sed pour éviter les conflits de caractères spéciaux
+    
+    - name: Activer SystemdCgroup dans Containerd
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
       notify: Restart containerd
 
   handlers:
@@ -164,6 +169,7 @@
     - name: Récupérer le statut final des nœuds
       shell: kubectl get nodes
       register: final_status
+
 
     - name: Afficher le résumé du cluster
       debug:
