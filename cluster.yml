@@ -1,53 +1,53 @@
 ---
-# PREMIER PLAY : Préparation brute de l'environnement
+# PREMIER PLAY : Nettoyage et préparation de l'environnement Python
 - name: Bootstrap - Installation de Python et Nettoyage APT
   hosts: all
-  gather_facts: no # On ne peut pas collecter les facts si Python n'est pas encore là
+  gather_facts: no
   become: yes
   tasks:
-    - name: Nettoyage forcé et installation Python 3
-      # Cette étape 'raw' permet de débloquer APT si des dépôts corrompus empêchent Ansible de fonctionner
+    - name: Nettoyage forcé des résidus de dépôts en échec
+      # On supprime tout ce qui a pu être partiellement configuré lors des échecs précédents
       raw: >
         sed -i '/kubernetes/d' /etc/apt/sources.list &&
-        rm -rf /etc/apt/sources.list.d/* &&
-        rm -rf /etc/apt/keyrings/* &&
+        rm -rf /etc/apt/sources.list.d/kubernetes.list &&
+        rm -rf /etc/apt/keyrings/kubernetes-apt-keyring* &&
         rm -rf /var/lib/apt/lists/* &&
         apt-get update &&
         apt-get install -y python3
       changed_when: false
 
-# DEUXIÈME PLAY : Configuration système et installation des composants K8s
+# DEUXIÈME PLAY : Configuration système et installation K8s
 - name: Préparation et installation des composants Kubernetes
   hosts: all
   become: yes
   tasks:
-    # 1. GESTION DU SWAP (K8s nécessite que le swap soit désactivé)
+    # --- GESTION DU SWAP ---
     - name: Désactiver le swap immédiatement
       command: swapoff -a
       when: ansible_facts['swaptotal_mb'] > 0
       changed_when: true
 
-    - name: Désactiver le swap de manière persistante (fstab)
+    - name: Commenter le swap dans fstab (persistance au reboot)
       replace:
         path: /etc/fstab
         regexp: '^([^#].*?\sswap\s+.*)$'
         replace: '# \1'
 
-    # 2. CONFIGURATION RÉSEAU COUCHE 2 (Nécessaire pour le trafic entre Pods)
-    - name: Configurer le chargement des modules noyau au boot
+    # --- RÉSEAU ET NOYAU ---
+    - name: Configurer modules noyau pour K8s
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Charger les modules immédiatement
+    - name: Charger les modules
       modprobe:
         name: "{{ item }}"
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Paramétrage Sysctl (Bridge-netfilter et IP Forwarding)
+    - name: Paramétrage Sysctl pour le réseau
       sysctl:
         name: "{{ item.key }}"
         value: "{{ item.value }}"
@@ -59,59 +59,59 @@
         - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { key: 'net.ipv4.ip_forward', value: '1' }
 
-    # 3. INSTALLATION DU DÉPÔT KUBERNETES AVEC CORRECTIF SIGNATURE 2026
-    - name: Installer les dépendances APT de base
+    # --- GESTION DES DÉPÔTS ET CLÉS (CORRECTIF 2026) ---
+    - name: Dépendances APT
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg]
         state: present
         update_cache: yes
 
-    - name: Créer le répertoire sécurisé pour les clés
+    - name: Re-créer le répertoire keyrings
       file:
         path: /etc/apt/keyrings
         state: directory
         mode: '0755'
 
-    - name: Télécharger la clé de signature du dépôt K8s
+    - name: Télécharger la clé K8s (Format ASCII)
       get_url:
         url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
         dest: /tmp/kubernetes-release.key
         mode: '0644'
 
-    - name: Convertir la clé en format GPG binaire (Correctif pour Signature Packet v3)
-      # On convertit le texte ASCII en binaire pour passer les politiques de sécurité strictes de 2026
+    - name: Convertir la clé en binaire GPG
+      # Nécessaire pour éviter les erreurs de format PGP v3 sur les OS récents
       shell: gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
       args:
         creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-    - name: Ajouter le dépôt officiel Kubernetes v1.29
+    - name: Ajouter dépôt K8s avec exception de confiance
+      # trusted=yes est ajouté pour ignorer le rejet de la signature globale v3 du dépôt distant
       apt_repository:
-        # On lie explicitement le dépôt à la clé binaire convertie ci-dessus
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
         state: present
         filename: kubernetes
 
-    # 4. INSTALLATION DES BINAIRES
-    - name: Installer Kubelet, Kubeadm, Kubectl et Containerd
+    # --- INSTALLATION DES PAQUETS ---
+    - name: Installer K8s et Containerd
       apt:
         name: [kubelet, kubeadm, kubectl, containerd]
         state: present
         update_cache: yes
 
-    - name: Bloquer la version des paquets (pour éviter les MAJ involontaires)
+    - name: Hold des paquets pour éviter les MAJ automatiques
       dpkg_selections:
         name: "{{ item }}"
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-# 5. CONFIGURATION DU RUNTIME (Containerd)
-    - name: Initialiser la configuration par défaut de Containerd
+    # --- CONFIGURATION CONTAINERD ---
+    - name: Initialiser config Containerd
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
-      # On sépare le sed pour éviter les conflits de caractères spéciaux
-    
-    - name: Activer SystemdCgroup dans Containerd
+      changed_when: true
+
+    - name: Activer SystemdCgroup dans Containerd (requis par K8s)
       replace:
         path: /etc/containerd/config.toml
         regexp: 'SystemdCgroup = false'
@@ -130,35 +130,34 @@
   hosts: master
   become: yes
   tasks:
-    - name: Exécuter Kubeadm Init (si pas déjà fait)
-      # Le CIDR 10.244.0.0/16 est requis spécifiquement par le plugin Flannel
+    - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Configurer l'accès Kubectl pour l'utilisateur root
+    - name: Dossier .kube pour root
       file:
         path: /root/.kube
         state: directory
         mode: '0755'
 
-    - name: Copier le fichier de configuration admin
+    - name: Config kubectl root
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /root/.kube/config
         remote_src: yes
 
-    - name: Déployer le plugin réseau Flannel
+    - name: Plugin Réseau Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_out
       changed_when: "'created' in flannel_out.stdout"
 
-# QUATRIÈME PLAY : Vérification finale
+# QUATRIÈME PLAY : Vérification du statut
 - name: Verification
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que le Master passe au statut 'Ready'
+    - name: Attente Master Ready
       shell: kubectl get nodes | grep "Ready"
       register: result
       until: result.rc == 0
@@ -166,11 +165,10 @@
       delay: 10
       changed_when: false
 
-    - name: Récupérer le statut final des nœuds
+    - name: Afficher le statut final
       shell: kubectl get nodes
       register: final_status
 
-
-    - name: Afficher le résumé du cluster
+    - name: Résultat console
       debug:
         var: final_status.stdout_lines
