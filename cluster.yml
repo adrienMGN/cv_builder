@@ -1,10 +1,12 @@
 ---
-- name: Bootstrap - Installation de Python et Nettoyage de l'enfer APT
+# PREMIER PLAY : Préparation brute de l'environnement
+- name: Bootstrap - Installation de Python et Nettoyage APT
   hosts: all
-  gather_facts: no
+  gather_facts: no # On ne peut pas collecter les facts si Python n'est pas encore là
   become: yes
   tasks:
-    - name: Nettoyage total et installation Python
+    - name: Nettoyage forcé et installation Python 3
+      # Cette étape 'raw' permet de débloquer APT si des dépôts corrompus empêchent Ansible de fonctionner
       raw: >
         sed -i '/kubernetes/d' /etc/apt/sources.list &&
         rm -rf /etc/apt/sources.list.d/* &&
@@ -14,35 +16,38 @@
         apt-get install -y python3
       changed_when: false
 
+# DEUXIÈME PLAY : Configuration système et installation des composants K8s
 - name: Préparation et installation des composants Kubernetes
   hosts: all
   become: yes
   tasks:
-    - name: Désactiver le swap
+    # 1. GESTION DU SWAP (K8s nécessite que le swap soit désactivé)
+    - name: Désactiver le swap immédiatement
       command: swapoff -a
       when: ansible_facts['swaptotal_mb'] > 0
       changed_when: true
 
-    - name: Commenter le swap dans fstab
+    - name: Désactiver le swap de manière persistante (fstab)
       replace:
         path: /etc/fstab
         regexp: '^([^#].*?\sswap\s+.*)$'
         replace: '# \1'
 
-    - name: Configurer modules noyau
+    # 2. CONFIGURATION RÉSEAU COUCHE 2 (Nécessaire pour le trafic entre Pods)
+    - name: Configurer le chargement des modules noyau au boot
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Charger modules
+    - name: Charger les modules immédiatement
       modprobe:
         name: "{{ item }}"
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Sysctl reseau
+    - name: Paramétrage Sysctl (Bridge-netfilter et IP Forwarding)
       sysctl:
         name: "{{ item.key }}"
         value: "{{ item.value }}"
@@ -54,46 +59,57 @@
         - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { key: 'net.ipv4.ip_forward', value: '1' }
 
-    - name: Dépendances APT
+    # 3. INSTALLATION DU DÉPÔT KUBERNETES AVEC CORRECTIF SIGNATURE 2026
+    - name: Installer les dépendances APT de base
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg]
         state: present
         update_cache: yes
 
-    - name: Re-créer le répertoire keyrings
+    - name: Créer le répertoire sécurisé pour les clés
       file:
         path: /etc/apt/keyrings
         state: directory
         mode: '0755'
 
-    - name: Télécharger clé K8s
+    - name: Télécharger la clé de signature du dépôt K8s
       get_url:
         url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
-        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        dest: /tmp/kubernetes-release.key
         mode: '0644'
 
-    - name: Ajouter dépôt K8s
+    - name: Convertir la clé en format GPG binaire (Correctif pour Signature Packet v3)
+      # On convertit le texte ASCII en binaire pour passer les politiques de sécurité strictes de 2026
+      shell: gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Ajouter le dépôt officiel Kubernetes v1.29
       apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        # On lie explicitement le dépôt à la clé binaire convertie ci-dessus
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
         state: present
         filename: kubernetes
 
-    - name: Installer K8s et Containerd
+    # 4. INSTALLATION DES BINAIRES
+    - name: Installer Kubelet, Kubeadm, Kubectl et Containerd
       apt:
         name: [kubelet, kubeadm, kubectl, containerd]
         state: present
         update_cache: yes
 
-    - name: Hold paquets
+    - name: Bloquer la version des paquets (pour éviter les MAJ involontaires)
       dpkg_selections:
         name: "{{ item }}"
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-    - name: Config Containerd
+    # 5. CONFIGURATION DU RUNTIME (Containerd)
+    - name: Initialiser la configuration par défaut de Containerd
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
+        # Activation du SystemdCgroup pour l'alignement avec Kubelet
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
       notify: Restart containerd
 
@@ -104,37 +120,40 @@
         state: restarted
         enabled: yes
 
+# TROISIÈME PLAY : Initialisation du Master
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Kubeadm Init
+    - name: Exécuter Kubeadm Init (si pas déjà fait)
+      # Le CIDR 10.244.0.0/16 est requis spécifiquement par le plugin Flannel
       command: kubeadm init --pod-network-cidr=10.244.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Dossier .kube
+    - name: Configurer l'accès Kubectl pour l'utilisateur root
       file:
         path: /root/.kube
         state: directory
         mode: '0755'
 
-    - name: Config kubectl root
+    - name: Copier le fichier de configuration admin
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /root/.kube/config
         remote_src: yes
 
-    - name: Plugin Flannel
+    - name: Déployer le plugin réseau Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_out
       changed_when: "'created' in flannel_out.stdout"
 
+# QUATRIÈME PLAY : Vérification finale
 - name: Verification
   hosts: master
   become: yes
   tasks:
-    - name: Attente Master Ready
+    - name: Attendre que le Master passe au statut 'Ready'
       shell: kubectl get nodes | grep "Ready"
       register: result
       until: result.rc == 0
@@ -142,10 +161,10 @@
       delay: 10
       changed_when: false
 
-    - name: Afficher noeuds
+    - name: Récupérer le statut final des nœuds
       shell: kubectl get nodes
       register: final_status
 
-    - name: Résultat
+    - name: Afficher le résumé du cluster
       debug:
         var: final_status.stdout_lines
