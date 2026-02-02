@@ -47,24 +47,35 @@ pipeline {
                 }
             }
         }
-
+        
         stage('Provision Kubernetes Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
+                        # 1. Préparation d'un inventaire Kubespray PROPRE dans son propre dossier
                         cd ${KUBESPRAY_DIR}
+                        rm -rf inventory/mycluster
+                        cp -rfp inventory/sample inventory/mycluster
                         
-                        # Lancement de Kubespray
-                        # On force reset_nodes=false pour éviter tout drainage inutile
-                        ${VENV_PATH}/bin/ansible-playbook -i ../jenkins/hosts.ini \
+                        # On écrase le hosts.ini du sample par le tien
+                        cp ${WORKSPACE}/jenkins/hosts.ini inventory/mycluster/hosts.ini
+        
+                        # 2. Nettoyage VRAIMENT total (on force le reset kubeadm avant)
+                        ${VENV_PATH}/bin/ansible all -i inventory/mycluster/hosts.ini -b -m shell -a "
+                            kubeadm reset -f || true;
+                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /usr/local/bin/kubectl /etc/cni/net.d /etc/ssl/etcd
+                        "
+        
+                        # 3. Lancement de l'installation avec exclusion STRICTE du rôle remove_node
+                        # On utilise -t (tags) pour ne lancer que l'install et --skip-tags pour sécuriser
+                        ${VENV_PATH}/bin/ansible-playbook -i inventory/mycluster/hosts.ini \
                             -b --become-user=root \
-                            --flush-cache \
                             cluster.yml \
                             -e container_manager=containerd \
                             -e kube_network_plugin=calico \
+                            --skip-tags="remove_node,drain,upgrade" \
                             -e ignore_assert_errors=yes \
-                            -e reset_nodes=false \
-                            -e kube_override_hostname='{{ inventory_hostname }}'
+                            -e reset_nodes=false
                     """
                 }
             }
