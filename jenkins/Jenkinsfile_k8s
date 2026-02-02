@@ -54,29 +54,33 @@ pipeline {
             }
         }
 
-        stage('Provision K3s Workers') {
-            steps {
-                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    script {
-                        // On récupère le TOKEN du master pour que les workers puissent joindre
-                        def k3sToken = sh(
-                            script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a 'cat /var/lib/rancher/k3s/server/node-token' | grep 'K10'",
-                            returnStdout: true
-                        ).trim().split('>>')[-1].trim()
-
-                        echo "Token récupéré : ${k3sToken}"
-
-                        // On installe les workers
-                        sh """
-                            ${VENV_PATH}/bin/ansible workers -i jenkins/hosts.ini -b -m shell -a "
-                                curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -
-                            "
-                        """
+        stage('Install K3s Workers') {
+                    steps {
+                        sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                            script {
+                                // On récupère le TOKEN de manière plus robuste
+                                def tokenCmd = "sudo cat /var/lib/rancher/k3s/server/node-token"
+                                def rawToken = sh(
+                                    script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a '${tokenCmd}'",
+                                    returnStdout: true
+                                ).trim()
+                                
+                                // On extrait uniquement la chaîne qui commence par K10
+                                def k3sToken = (rawToken =~ /K10[a-f0-9:]+/)[0]
+        
+                                echo "Token nettoyé : ${k3sToken}"
+        
+                                // Installation des workers en forçant l'IP publique du master
+                                sh """
+                                    ${VENV_PATH}/bin/ansible workers -i jenkins/hosts.ini -b -m shell -a "
+                                        curl -sfL https://get.k3s.io | K3S_URL=https://100.120.92.90:6443 K3S_TOKEN=${k3sToken} sh -s - --node-name {{ inventory_hostname }}
+                                    "
+                                """
+                            }
+                        }
                     }
                 }
-            }
-        }
-
+    
         stage('Verify Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
