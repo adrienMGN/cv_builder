@@ -39,7 +39,7 @@
       shell: openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
       register: dynamic_ca_hash
 
-    - name: Installer Flannel
+    - name: Installer Flannel et Configurer Kubeconfig
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
@@ -48,15 +48,19 @@
       register: flannel_res
       until: flannel_res.rc == 0
       retries: 5
-      delay: 10
+      delay: 15
 
 # ==============================================================================
-# PLAY 4 : Workers - On utilise le Hash récupéré au Play 3
+# PLAY 4 : Workers - Jonction dynamique
 # ==============================================================================
 - name: Jonction Workers
   hosts: workers
   become: yes
   tasks:
+    - name: Pause de sécurité pour le Master
+      pause:
+        seconds: 20
+
     - name: Rejoindre le cluster
       command: >
         kubeadm join 152.228.130.229:6443 
@@ -69,14 +73,23 @@
       delay: 20
 
 # ==============================================================================
-# PLAY 5 : Validation
+# PLAY 5 : Validation Finale (Version Robuste)
 # ==============================================================================
 - name: Validation
   hosts: master
   become: yes
   tasks:
-    - name: Statut final
-      shell: "kubectl get nodes"
+    - name: Attendre que les noeuds passent Ready
+      # On utilise --kubeconfig pour éviter l'erreur TLS x509
+      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
+      register: nodes_ready
+      until: nodes_ready.stdout|int == 3
+      retries: 20
+      delay: 15
+      changed_when: false
+
+    - name: Statut final (Affichage)
+      command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
       register: res
     - debug:
         var: res.stdout_lines
