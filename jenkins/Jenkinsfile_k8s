@@ -5,7 +5,7 @@ pipeline {
         // ID du credential SSH configuré dans Jenkins pour se connecter aux futurs nœuds K8s
         ANSI_SSH_CREDS = 'k8s-nodes-ssh-key'
         // Chemin vers l'inventaire Ansible (peut être un fichier dans votre repo Git)
-        INVENTORY_PATH = '/var/jenkins_home/workspace/provisioning/hosts.ini'
+        INVENTORY_PATH = '/var/jenkins_home/workspace/provisioning/jenkins/hosts.ini'
         //récuperation du mdp du serveur distant
     }
 
