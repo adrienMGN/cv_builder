@@ -1,26 +1,23 @@
 ---
 # ==============================================================================
-# PLAY 0 : Nettoyage de sécurité (Évite les CrashLoops et conflits de ports)
+# PLAY 0 : Nettoyage sélectif (On ne nettoie QUE les Workers)
 # ==============================================================================
-- name: Nettoyage de sécurité avant déploiement
-  hosts: all
+- name: Nettoyage des Workers uniquement
+  hosts: workers
   become: yes
   tasks:
-    - name: Reset complet pour repartir sur une base saine
+    - name: Reset kubeadm sur les workers pour nettoyer les tentatives ratées
       shell: |
         kubeadm reset -f || true
-        systemctl stop kubelet || true
-        systemctl stop containerd || true
         rm -rf /etc/cni/net.d
         rm -rf /var/lib/cni/
         rm -rf /var/lib/kubelet/*
-        rm -rf /etc/kubernetes/manifests/*
         ip link delete cni0 || true
         ip link delete flannel.1 || true
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration des noms d'hôtes (Indispensable pour différencier les Workers)
+# PLAY 1 : Configuration des noms d'hôtes
 # ==============================================================================
 - name: Unification des Hostnames
   hosts: all
@@ -31,9 +28,9 @@
         name: "{{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 2 : Préparation Système (Bootstrap & Containerd)
+# PLAY 2 : Préparation Système (Containerd & Kernel)
 # ==============================================================================
-- name: Préparation et installation des composants
+- name: Préparation des composants
   hosts: all
   become: yes
   tasks:
@@ -43,7 +40,7 @@
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Configurer Sysctl pour le réseau
+    - name: Configurer Sysctl
       sysctl:
         name: "{{ item }}"
         value: '1'
@@ -58,10 +55,9 @@
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        sed -i 's/disabled_plugins = \[.*/disabled_plugins = \[\]/g' /etc/containerd/config.toml
       notify: Restart containerd
 
-    - name: Activer les services de base
+    - name: Activer les services
       service:
         name: "{{ item }}"
         state: started
@@ -75,79 +71,68 @@
         state: restarted
 
 # ==============================================================================
-# PLAY 3 : Initialisation du Master
+# PLAY 3 : Vérification du Master (Déjà fait manuellement)
 # ==============================================================================
-- name: Initialisation du Master
+- name: Vérification du Master
   hosts: master
   become: yes
   tasks:
-    - name: Kubeadm Init
+    - name: Kubeadm Init (Sauté si admin.conf existe déjà)
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Configurer Kubectl pour root
-      copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
-        remote_src: yes
-        mode: '0600'
+    - name: Vérifier si Flannel est présent
+      command: kubectl get ds kube-flannel -n kube-flannel
+      register: flannel_check
+      ignore_errors: yes
 
-    - name: Attendre l'API Server (6443)
-      wait_for:
-        port: 6443
-        timeout: 300
-
-    - name: Installer Flannel (Réseau)
+    - name: Installer Flannel si absent
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      register: flannel_out
-      until: flannel_out.rc == 0
-      retries: 10
-      delay: 15
+      when: flannel_check.rc != 0
 
 # ==============================================================================
-# PLAY 4 : Automatisation de la jonction des Workers
+# PLAY 4 : Token et Join des Workers
 # ==============================================================================
-- name: Génération du Token sur le Master
+- name: Préparation du ralliement
   hosts: master
   become: yes
   tasks:
-    - name: Créer le join command
+    - name: Générer un nouveau token de join
       command: kubeadm token create --print-join-command
       register: join_command_raw
 
-    - name: Sauvegarder la commande dans une variable
+    - name: Stocker la commande
       set_fact:
         join_cmd: "{{ join_command_raw.stdout }}"
 
-- name: Jonction des Workers au cluster
+- name: Jonction des Workers
   hosts: workers
   become: yes
   tasks:
-    - name: Joindre le cluster
+    - name: Rejoindre le cluster (Sauté si déjà joint)
       command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
       args:
         creates: /etc/kubernetes/kubelet.conf
 
 # ==============================================================================
-# PLAY 5 : Attente de l'état READY (La partie que tu as demandée)
+# PLAY 5 : Attente de l'état final
 # ==============================================================================
-- name: Vérification de l'état de santé du Cluster
+- name: Validation finale
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que TOUS les noeuds soient en état Ready
-      shell: "kubectl get nodes | grep -v 'NotReady' | grep 'Ready' | wc -l"
+    - name: Attendre que les 3 noeuds soient Ready
+      shell: "kubectl get nodes | grep ' Ready ' | wc -l"
       register: nodes_ready
-      # On compare le nombre de Ready au nombre total de serveurs dans l'inventaire
       until: nodes_ready.stdout|int == groups['all']|length
-      retries: 30
-      delay: 20
+      retries: 40
+      delay: 30
       changed_when: false
 
-    - name: Afficher le statut final du cluster
+    - name: Afficher le cluster
       command: kubectl get nodes
-      register: cluster_status
+      register: final_status
 
     - debug:
-        var: cluster_status.stdout_lines
+        var: final_status.stdout_lines
