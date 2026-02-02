@@ -21,7 +21,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mongo # Ce nom servira d'URL pour le backend (mongodb://mongo:27017)
+  name: mongo
 spec:
   ports:
     - port: 27017
@@ -54,6 +54,8 @@ spec:
           value: "5000"
         - name: NODE_ENV
           value: "production"
+        - name: ALLOWED_ORIGINS
+          value: "http://152.228.130.229:30000"
         ports:
         - containerPort: 5000
 ---
@@ -68,10 +70,10 @@ spec:
   ports:
     - port: 5000
       targetPort: 5000
-      nodePort: 30001 # API accessible sur IP_VPS:30001
+      nodePort: 30001 # API sur IP_VPS:30001
 
 ---
-# --- FRONTEND (CV-BUILDER) ---
+# --- FRONTEND ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -103,4 +105,4 @@ spec:
   ports:
     - port: 80
       targetPort: 80
-      nodePort: 30000 # App accessible sur IP_VPS:30000
+      nodePort: 30000 # App sur IP_VPS:30000
