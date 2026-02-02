@@ -43,7 +43,7 @@ services:
       - CV_LIFETIME_MINUTES=10
       # AJOUT ICI : On ajoute le nouveau domaine HTTPS dans la liste
       - ALLOWED_ORIGINS=http://vps-82ecffcd.vps.ovh.net:3000,http://localhost:3000,https://cv-builder.skirshta.fr
-      - RESEND_API_KEY=re_eS1MaEPr_QKcnREpze4LXQZx9FfxT4q9B
+      - RESEND_API_KEY=re_a7Pbgkno_EaaYV4V5FAmDfx9vUnGR1nBV
     logging:
       driver: "json-file"
       options:
