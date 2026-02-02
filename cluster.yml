@@ -20,7 +20,7 @@
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration des noms d'hôtes (Correctif pour éviter le doublon 'auto')
+# PLAY 1 : Configuration des noms d'hôtes (Indispensable pour différencier les Workers)
 # ==============================================================================
 - name: Unification des Hostnames
   hosts: all
@@ -29,7 +29,6 @@
     - name: Définir le nom d'hôte selon l'inventaire
       hostname:
         name: "{{ inventory_hostname }}"
-      # Cela changera 'auto' en 'master-node-01', 'worker-node-02', etc.
 
 # ==============================================================================
 # PLAY 2 : Préparation Système (Bootstrap & Containerd)
@@ -62,7 +61,7 @@
         sed -i 's/disabled_plugins = \[.*/disabled_plugins = \[\]/g' /etc/containerd/config.toml
       notify: Restart containerd
 
-    - name: S'assurer que containerd et kubelet sont lancés
+    - name: Activer les services de base
       service:
         name: "{{ item }}"
         state: started
@@ -125,20 +124,30 @@
   hosts: workers
   become: yes
   tasks:
-    - name: Joindre le cluster (en forçant le nom unique)
+    - name: Joindre le cluster
       command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
       args:
         creates: /etc/kubernetes/kubelet.conf
 
 # ==============================================================================
-# PLAY 5 : Vérification Finale
+# PLAY 5 : Attente de l'état READY (La partie que tu as demandée)
 # ==============================================================================
-- name: Statut du Cluster
+- name: Vérification de l'état de santé du Cluster
   hosts: master
   become: yes
   tasks:
-    - name: Liste des noeuds
+    - name: Attendre que TOUS les noeuds soient en état Ready
+      shell: "kubectl get nodes | grep -v 'NotReady' | grep 'Ready' | wc -l"
+      register: nodes_ready
+      # On compare le nombre de Ready au nombre total de serveurs dans l'inventaire
+      until: nodes_ready.stdout|int == groups['all']|length
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    - name: Afficher le statut final du cluster
       command: kubectl get nodes
-      register: nodes_list
+      register: cluster_status
+
     - debug:
-        var: nodes_list.stdout_lines
+        var: cluster_status.stdout_lines
