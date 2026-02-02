@@ -21,7 +21,7 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage radical des processus et verrous APT"
+    - name: "Nettoyage radical des verrous APT"
       shell: |
         killall apt apt-get dpkg || true
         rm -f /var/lib/apt/lists/lock
@@ -52,7 +52,6 @@
         apt-get remove -y kubelet kubeadm kubectl --purge || true
         rm -rf /etc/apt/sources.list.d/kubernetes.list
         rm -rf /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-        # On supprime les binaires résiduels qui pourraient polluer le PATH
         rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl
       ignore_errors: yes
 
@@ -65,9 +64,9 @@
         executable: /bin/bash
 
     - name: "Installer K8s v1.31 (VERSION CIBLÉE)"
-      shell: |
+      # !unsafe est CRUCIAL ici pour protéger le caractère *
+      shell: !unsafe |
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-        # On force l'installation de la version 1.31 présente dans le dépôt
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet=1.31* kubeadm=1.31* kubectl=1.31*
         apt-mark hold kubelet kubeadm kubectl
       args:
@@ -128,7 +127,6 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
-      # On ajoute --ignore-preflight-errors=all au cas où un warning persisterait
       command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
