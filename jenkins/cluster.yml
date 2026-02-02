@@ -1,135 +1,111 @@
 ---
-- name: "Configuration Kubernetes - Harmonisation Totale"
+# ==============================================================================
+# PLAY 1 : Nettoyage Radical
+# ==============================================================================
+- name: "Nettoyage complet des nœuds"
   hosts: all
   become: yes
   tasks:
-    - name: "Hostname et Correction /etc/hosts"
+    - name: "Reset kubeadm et arrêt des services"
+      shell: |
+        kubeadm reset -f || true
+        systemctl stop kubelet containerd || true
+      ignore_errors: yes
+
+    - name: "Suppression des fichiers résiduels"
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/etcd
+        - /etc/cni
+        - /opt/cni
+        - /etc/containerd
+        - /home/ubuntu/.kube
+
+# ==============================================================================
+# PLAY 2 : Installation via APT (Kubernetes 1.31)
+# ==============================================================================
+- name: "Installation via dépôts officiels"
+  hosts: all
+  become: yes
+  tasks:
+    - name: "Configuration Système et Swap"
       shell: |
         hostnamectl set-hostname {{ inventory_hostname }}
-        sed -i '/127.0.1.1/d' /etc/hosts
-        echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
-
-    - name: "Configuration Réseau Noyau"
-      shell: |
-        modprobe overlay
-        modprobe br_netfilter
+        modprobe overlay && modprobe br_netfilter
         cat <<EOF > /etc/sysctl.d/k8s.conf
         net.bridge.bridge-nf-call-iptables  = 1
         net.bridge.bridge-nf-call-ip6tables = 1
         net.ipv4.ip_forward                 = 1
         EOF
         sysctl --system
-
-    - name: "Désactiver le Swap"
-      shell: |
         swapoff -a
         sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-    - name: "Installation Containerd et outils"
+    - name: "Installation des pré-requis APT"
       apt:
-        name: [containerd, socat, conntrack, iptables, curl]
+        name: [apt-transport-https, ca-certificates, curl, gpg, containerd]
         state: present
         update_cache: yes
 
-    - name: "Création du dossier de configuration Containerd"
-      file:
-        path: /etc/containerd
-        state: directory
-        mode: '0755'
-
-    - name: "CONFIGURATION CRUCIALE : Containerd (Cgroup + Sandbox)"
+    - name: "Configuration de Containerd (Systemd Cgroup)"
       shell: |
+        mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
-      notify: Restart Containerd
+        systemctl restart containerd
 
-    - name: "Configuration de crictl"
-      copy:
-        dest: /etc/crictl.yaml
-        content: |
-          runtime-endpoint: unix:///var/run/containerd/containerd.sock
-          image-endpoint: unix:///var/run/containerd/containerd.sock
-          timeout: 10
-          debug: false
-
-    - name: "Installation des Binaires K8s"
+    - name: "Ajout de la clé GPG Kubernetes"
       shell: |
-        mkdir -p /opt/cni/bin
-        curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
-        cd /usr/bin
-        curl -L -o kubeadm https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubeadm
-        curl -L -o kubelet https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubelet
-        curl -L -o kubectl https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
-        chmod +x kubeadm kubelet kubectl
+        mkdir -p -m 755 /etc/apt/keyrings
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
 
-    - name: "Service Kubelet Minimal"
-      copy:
-        dest: /etc/systemd/system/kubelet.service
-        content: |
-          [Unit]
-          Description=kubelet: The Kubernetes Node Agent
-          [Service]
-          ExecStart=/usr/bin/kubelet
-          Restart=always
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: "Configuration Kubelet (Systemd Driver Force)"
+    - name: "Ajout du dépôt Kubernetes 1.31"
       shell: |
-        mkdir -p /var/lib/kubelet
-        cat <<EOF > /var/lib/kubelet/config.yaml
-        apiVersion: kubelet.config.k8s.io/v1beta1
-        kind: KubeletConfiguration
-        cgroupDriver: systemd
-        EOF
-        mkdir -p /etc/systemd/system/kubelet.service.d
-        echo -e '[Service]\nExecStart=\nExecStart=/usr/bin/kubelet --config=/var/lib/kubelet/config.yaml --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
-        systemctl daemon-reload
-        systemctl enable --now kubelet
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
 
-  handlers:
-    - name: Restart Containerd
-      systemd:
-        name: containerd
-        state: restarted
+    - name: "Installation de kubeadm, kubelet et kubectl"
+      apt:
+        name: [kubelet, kubeadm, kubectl]
+        state: present
+        update_cache: yes
+
+    - name: "Blocage des versions (apt-mark hold)"
+      shell: apt-mark hold kubelet kubeadm kubectl
 
 # ==============================================================================
-# PLAY 2 : Initialisation du Master
+# PLAY 3 : Initialisation Master
 # ==============================================================================
-- name: "Initialisation du Master"
+- name: "Initialisation du Cluster"
   hosts: master
   become: yes
   tasks:
-    - name: "Kubeadm Reset"
-      command: /usr/bin/kubeadm reset -f
-
-    - name: "Pre-pull images"
-      command: /usr/bin/kubeadm config images pull
-
-    - name: "Initialiser le cluster"
+    - name: "Kubeadm Init"
       command: >
-        /usr/bin/kubeadm init 
+        kubeadm init 
         --pod-network-cidr=10.244.0.0/16 
         --apiserver-advertise-address={{ ansible_host }}
-        --ignore-preflight-errors=all
+        --cri-socket=unix:///var/run/containerd/containerd.sock
       register: kubeadm_init
 
-    - name: "Configurer Kubeconfig"
+    - name: "Configuration Kubeconfig (ubuntu)"
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
-    - name: "Installer Flannel"
+    - name: "Installation Flannel"
       become_user: ubuntu
-      command: /usr/bin/kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
-    - name: "Générer join command"
-      shell: "/usr/bin/kubeadm token create --print-join-command"
+    - name: "Génération de la commande de join"
+      shell: kubeadm token create --print-join-command
       register: join_cmd
 
-    - name: "Partager join command"
+    - name: "Transmission aux workers"
       set_fact:
         final_join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
@@ -137,14 +113,30 @@
       with_items: "{{ groups['workers'] }}"
 
 # ==============================================================================
-# PLAY 3 : Jonction des Workers
+# PLAY 4 : Jonction Workers
 # ==============================================================================
 - name: "Jonction des Workers"
   hosts: workers
   become: yes
   tasks:
-    - name: "Kubeadm Reset Worker"
-      command: /usr/bin/kubeadm reset -f
-
     - name: "Rejoindre le cluster"
-      command: "{{ final_join_command }} --ignore-preflight-errors=all"
+      command: "{{ final_join_command }}"
+
+# ==============================================================================
+# PLAY 5 : Vérification Finale
+# ==============================================================================
+- name: "Vérification"
+  hosts: master
+  become: yes
+  tasks:
+    - name: "Attente des nœuds Ready"
+      shell: "kubectl get nodes"
+      register: nodes_res
+      until: 
+        - '" Ready" in nodes_res.stdout'
+        - 'nodes_res.stdout_lines | length >= 4'
+      retries: 15
+      delay: 15
+
+    - debug:
+        msg: "{{ nodes_res.stdout_lines }}"
