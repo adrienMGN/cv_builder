@@ -39,7 +39,7 @@ pipeline {
                 // On récupère le config du master pour pouvoir piloter le cluster depuis Jenkins
                 sshagent(['master-specific-key']) {
                     sh """
-                        scp -o StrictHostKeyChecking=no root@100.120.92.90:/etc/rancher/k3s/k3s.yaml ${KUBECONFIG_PATH}
+                        scp -o StrictHostKeyChecking=no ubuntu@100.120.92.90:/etc/rancher/k3s/k3s.yaml ${KUBECONFIG_PATH}
                         sed -i 's/127.0.0.1/100.120.92.90/g' ${KUBECONFIG_PATH}
                         chmod 600 ${KUBECONFIG_PATH}
                     """
@@ -51,7 +51,7 @@ pipeline {
             steps {
                 script {
                     // Application des manifestes
-                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} apply -f k8s/app-full.yaml"
+                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} apply -f jenkins/app-full.yaml"
                     
                     // On attend que le déploiement soit prêt ou on force le refresh
                     sh "kubectl --kubeconfig=${KUBECONFIG_PATH} rollout restart deployment/frontend"
