@@ -8,9 +8,7 @@ pipeline {
 
     stages {
         stage('Checkout Code') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Setup Ansible') {
@@ -46,9 +44,9 @@ pipeline {
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
                             mkdir -p /etc/rancher/k3s && \
                             echo 'mirrors:
-          \"100.77.150.49:5000\":
-            endpoint:
-              - \"http://100.77.150.49:5000\"' > /etc/rancher/k3s/registries.yaml
+  \"100.77.150.49:5000\":
+    endpoint:
+      - \"http://100.77.150.49:5000\"' > /etc/rancher/k3s/registries.yaml
                         "
                     """
                 }
@@ -63,6 +61,9 @@ pipeline {
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
                             curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--disable traefik --node-name master-node-01' sh -
                         "
+                        
+                        echo "Correction des droits sur k3s.yaml pour permettre l'accès distant..."
+                        ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "chmod 644 /etc/rancher/k3s/k3s.yaml"
                     """
                 }
             }
@@ -72,15 +73,12 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     script {
-                        // On récupère le token brute
                         String rawOutput = sh(
                             script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a 'cat /var/lib/rancher/k3s/server/node-token'",
                             returnStdout: true
                         ).trim()
                         
-                        // Extraction sécurisée sans utiliser d'objets non-sérialisables (Matcher) dans le scope principal
                         String k3sToken = extractToken(rawOutput)
-
                         echo "Token extrait : ${k3sToken.substring(0, 10)}..."
 
                         sh """
@@ -96,27 +94,20 @@ pipeline {
         stage('Verify Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    sh """
-                        ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "kubectl get nodes"
-                    """
+                    sh "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a 'kubectl get nodes'"
                 }
             }
         }
     }
 
     post {
-        always {
-            cleanWs()
-        }
+        always { cleanWs() }
     }
 }
 
-// Fonction décorée pour éviter le bug de sérialisation
 @NonCPS
 def extractToken(String text) {
     def matcher = (text =~ /K10[a-f0-9:]+::server:[a-f0-9]+/)
-    if (matcher) {
-        return matcher[0]
-    }
+    if (matcher) { return matcher[0] }
     return null
 }
