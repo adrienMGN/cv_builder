@@ -1,13 +1,12 @@
 ---
 # ==============================================================================
-# PLAY 0 : Nettoyage de sécurité (Évite les CrashLoops au déploiement)
+# PLAY 0 : Nettoyage de sécurité (Évite les CrashLoops et conflits de ports)
 # ==============================================================================
 - name: Nettoyage de sécurité avant déploiement
-  hosts: master
+  hosts: all
   become: yes
   tasks:
-    - name: Arrêt forcé des services et nettoyage des résidus
-      # Cette commande ne s'exécute que si le cluster semble instable ou déjà présent
+    - name: Reset complet pour repartir sur une base saine
       shell: |
         kubeadm reset -f || true
         systemctl stop kubelet || true
@@ -15,224 +14,119 @@
         rm -rf /etc/cni/net.d
         rm -rf /var/lib/cni/
         rm -rf /var/lib/kubelet/*
+        rm -rf /etc/kubernetes/manifests/*
         ip link delete cni0 || true
         ip link delete flannel.1 || true
-        systemctl start containerd
-      failed_when: false # On ne veut pas que le pipeline s'arrête si rien n'à nettoyer
-      
-# ==============================================================================
-# PLAY 1 : Préparation de l'environnement (Bootstrap)
-# ==============================================================================
-- name: Bootstrap - Installation de Python et Nettoyage APT
-  hosts: all
-  gather_facts: no
-  become: yes
-  tasks:
-    - name: Nettoyage ciblé des dépôts K8s (Éviter de casser Docker/Jenkins)
-      raw: >
-        sed -i '/kubernetes/d' /etc/apt/sources.list &&
-        rm -rf /etc/apt/sources.list.d/kubernetes.list &&
-        rm -rf /etc/apt/keyrings/kubernetes-apt-keyring* &&
-        apt-get update &&
-        apt-get install -y python3
-      changed_when: false
+      failed_when: false
 
 # ==============================================================================
-# PLAY 2 : Configuration système et installation K8s
+# PLAY 1 : Préparation Système (Bootstrap & Containerd)
 # ==============================================================================
-- name: Préparation et installation des composants Kubernetes
+- name: Préparation et installation des composants
   hosts: all
   become: yes
   tasks:
-    - name: Désactiver le swap (Requis par Kubelet)
-      command: swapoff -a
-      when: ansible_facts['swaptotal_mb'] > 0
-      changed_when: true
-
-    - name: Commenter le swap dans fstab pour la persistance
-      replace:
-        path: /etc/fstab
-        regexp: '^([^#].*?\sswap\s+.*)$'
-        replace: '# \1'
-
-    - name: Configurer le chargement des modules noyau (overlay & br_netfilter)
-      copy:
-        dest: /etc/modules-load.d/k8s.conf
-        content: |
-          overlay
-          br_netfilter
-
-    - name: Charger les modules noyau immédiatement
+    - name: Charger les modules noyau
       modprobe:
         name: "{{ item }}"
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Configurer Sysctl pour le réseau (IP Forwarding)
+    - name: Configurer Sysctl pour le réseau
       sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        state: present
-        sysctl_file: /etc/sysctl.d/k8s.conf
-        reload: yes
-      loop:
-        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
-        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
-        - { key: 'net.ipv4.ip_forward', value: '1' }
-
-    - name: Installer les outils APT de base
-      apt:
-        name: [apt-transport-https, ca-certificates, curl, gnupg]
-        state: present
-        update_cache: yes
-
-    - name: Créer le répertoire pour les clés APT
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Télécharger et convertir la clé K8s (Correctif 2026)
-      get_url:
-        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
-        dest: /tmp/kubernetes-release.key
-        mode: '0644'
-
-    - name: Conversion GPG de la clé
-      shell: gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-      args:
-        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-    - name: Ajouter le dépôt K8s
-      apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
-        state: present
-        filename: kubernetes
-
-    - name: Installer Kubelet, Kubeadm, Kubectl et Containerd
-      apt:
-        name: [kubelet, kubeadm, kubectl, containerd]
-        state: present
-        update_cache: yes
-
-    - name: Verrouiller les versions (Hold)
-      dpkg_selections:
         name: "{{ item }}"
-        selection: hold
-      loop: [kubelet, kubeadm, kubectl]
+        value: '1'
+        state: present
+      loop:
+        - net.bridge.bridge-nf-call-iptables
+        - net.bridge.bridge-nf-call-ip6tables
+        - net.ipv4.ip_forward
 
-    # --- CONFIGURATION CONTAINERD (PRÉSERVE DOCKER/JENKINS) ---
-    - name: Réinitialiser la config containerd pour activer le support CRI
+    - name: Configurer Containerd avec SystemdCgroup (Crucial pour 2026)
       shell: |
+        mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
         sed -i 's/disabled_plugins = \[.*/disabled_plugins = \[\]/g' /etc/containerd/config.toml
-      changed_when: true
+      notify: Restart containerd
 
-    - name: Activer SystemdCgroup
-      replace:
-        path: /etc/containerd/config.toml
-        regexp: 'SystemdCgroup = false'
-        replace: 'SystemdCgroup = true'
+    - name: S'assurer que containerd et kubelet sont lancés
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop: [containerd, kubelet]
 
-    - name: Redémarrer Containerd pour appliquer les changements CRI
+  handlers:
+    - name: Restart containerd
       service:
         name: containerd
         state: restarted
 
 # ==============================================================================
-# PLAY 3 : Initialisation du Master
+# PLAY 2 : Initialisation du Master
 # ==============================================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Lancer Kubeadm Init
+    - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Créer le dossier .kube pour root
-      file:
-        path: /root/.kube
-        state: directory
-        mode: '0755'
-
-    - name: Configurer kubectl pour root
+    - name: Configurer Kubectl pour root
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /root/.kube/config
         remote_src: yes
+        mode: '0600'
 
-    - name: Attendre que l'API Server réponde (Port 6443)
+    - name: Attendre l'API Server (6443)
       wait_for:
         port: 6443
-        delay: 5
         timeout: 300
-        state: started
 
-    - name: Installer le plugin réseau Flannel
-      # Utilisation de 'until' et 'retries' pour gérer la stabilité au démarrage
+    - name: Installer Flannel (Réseau)
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_out
       until: flannel_out.rc == 0
       retries: 10
       delay: 15
-      changed_when: "'created' in flannel_out.stdout"
 
 # ==============================================================================
-# PLAY 4 : Vérification
+# PLAY 3 : Automatisation de la jonction des Workers
 # ==============================================================================
-- name: Verification
+- name: Génération du Token sur le Master
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que le Master soit Ready
-      shell: kubectl get nodes | grep "Ready"
-      register: result
-      until: result.rc == 0
-      retries: 20
-      delay: 10
-      changed_when: false
-
-    - name: Afficher le statut final
-      shell: kubectl get nodes
-      register: final_status
-
-    - name: Résultat console
-      debug:
-        var: final_status.stdout_lines
-        
-# ==============================================================================
-# PLAY 5 : Jonction des Workers au Master
-# ==============================================================================
-- name: Récupération de la commande de join sur le Master
-  hosts: master
-  become: yes
-  tasks:
-    - name: Générer la commande de join
+    - name: Créer le join command
       command: kubeadm token create --print-join-command
       register: join_command_raw
 
-    - name: Créer une variable avec la commande de join
+    - name: Sauvegarder la commande dans une variable
       set_fact:
-        join_command: "{{ join_command_raw.stdout }}"
+        join_cmd: "{{ join_command_raw.stdout }}"
 
-- name: Jonction des Workers
+- name: Jonction des Workers au cluster
   hosts: workers
   become: yes
   tasks:
-    - name: Vérifier si le Worker est déjà dans un cluster
-      stat:
-        path: /etc/kubernetes/kubelet.conf
-      register: kubelet_conf
-
     - name: Joindre le cluster
-      # On n'exécute la commande que si le fichier kubelet.conf n'existe pas encore
-      command: "{{ hostvars[groups['master'][0]]['join_command'] }}"
-      when: not kubelet_conf.stat.exists
-      register: join_result
+      command: "{{ hostvars[groups['master'][0]]['join_cmd'] }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
 
-    - name: Statut de la jonction
-      debug:
-        msg: "Le worker a rejoint le cluster avec succès"
-      when: join_result is changed
+# ==============================================================================
+# PLAY 4 : Vérification Finale
+# ==============================================================================
+- name: Statut du Cluster
+  hosts: master
+  become: yes
+  tasks:
+    - name: Liste des noeuds
+      command: kubectl get nodes
+      register: nodes_list
+    - debug:
+        var: nodes_list.stdout_lines
