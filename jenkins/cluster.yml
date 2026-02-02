@@ -58,17 +58,26 @@
       args:
         executable: /bin/bash
 
-    - name: "Installation de Kubeadm, Kubelet et Kubectl"
+    # --- Section Installation K8s (Correction Robuste Jinja2) ---
+    
+    - name: "Créer le dossier keyrings"
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: "Télécharger la clé GPG Kubernetes"
+      shell: "curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg"
+
+    - name: "Ajouter le dépôt Kubernetes (Fix 2026)"
+      # On écrit le fichier directement via le module copy pour éviter le parsing shell/jinja2
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
+
+    - name: "Installer Kubeadm, Kubelet et Kubectl"
       shell: |
-        set -e
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-        
-        # Correction 2026 : on ajoute [trusted=yes] pour forcer l'acceptation du dépôt malgré la signature v3 expirée
-        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
-        
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true
-        
         apt-mark unhold kubelet kubeadm kubectl || true
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
@@ -119,7 +128,6 @@
       delay: 10
 
     - name: "Générer la commande de join"
-      # Correction TLS : on force l'utilisation de la config locale pour éviter l'erreur de certificat sur l'IP publique
       command: kubeadm --kubeconfig=/etc/kubernetes/admin.conf token create --print-join-command
       register: join_cmd
 
