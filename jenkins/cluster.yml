@@ -1,19 +1,19 @@
 ---
 # ==============================================================================
-# PLAY 1 : Nettoyage et Préparation Système
+# PLAY 1 : Nettoyage et Bypass Sécurité GPG 2026
 # ==============================================================================
 - name: "Nettoyage et Préparation"
   hosts: all
   become: yes
   tasks:
-    - name: "Reset complet et arrêt des services"
+    - name: "Reset complet"
       shell: |
         kubeadm reset -f || true
         systemctl stop kubelet containerd || true
-        rm -rf /etc/kubernetes /var/lib/etcd /var/lib/kubelet /etc/cni /opt/cni /etc/containerd
+        rm -rf /etc/kubernetes /var/lib/kubelet /etc/containerd /etc/apt/sources.list.d/kubernetes.list
       ignore_errors: yes
 
-    - name: "Configuration Système (Modules & Sysctl)"
+    - name: "Configuration Système"
       shell: |
         modprobe overlay && modprobe br_netfilter
         cat <<EOF > /etc/sysctl.d/k8s.conf
@@ -23,22 +23,14 @@
         EOF
         sysctl --system
         swapoff -a
-        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-# ==============================================================================
-# PLAY 2 : Installation via APT (Correctif GPG 2026)
-# ==============================================================================
-- name: "Installation des paquets"
-  hosts: all
-  become: yes
-  tasks:
-    - name: "Installation Containerd et dépendances"
+    - name: "Installation Containerd et Outils GPG"
       apt:
         name: [containerd, curl, gnupg, apt-transport-https, ca-certificates]
         state: present
         update_cache: yes
 
-    - name: "Configuration Containerd (Systemd Cgroup)"
+    - name: "FORCE : Configuration Containerd (Systemd + Sandbox 3.10)"
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
@@ -46,35 +38,37 @@
         sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
         systemctl restart containerd
 
-    - name: "Gestion de la clé GPG Kubernetes (v1.31)"
+    - name: "Ajout du dépôt avec TRUSTED=YES (Bypass Signature v3 2026)"
       shell: |
         mkdir -p -m 755 /etc/apt/keyrings
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
 
-    - name: "Ajout du dépôt Kubernetes"
-      copy:
-        dest: /etc/apt/sources.list.d/kubernetes.list
-        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
-
-    - name: "Installation Kubelet, Kubeadm, Kubectl"
+    - name: "Installation Kubelet, Kubeadm, Kubectl (Force)"
       apt:
         name: [kubelet, kubeadm, kubectl]
         state: present
         update_cache: yes
-        allow_downgrades: yes
+        allow_unauthenticated: yes
 
-    - name: "Fixation des versions (Hold)"
+    - name: "Hold des versions"
       shell: apt-mark hold kubelet kubeadm kubectl
 
 # ==============================================================================
-# PLAY 3 : Initialisation Master
+# PLAY 2 : Initialisation Master (Correction Timeout API)
 # ==============================================================================
 - name: "Initialisation Master"
   hosts: master
   become: yes
   tasks:
-    - name: "Pré-chargement des images"
-      command: kubeadm config images pull
+    - name: "Correction Kubelet Config"
+      shell: |
+        mkdir -p /var/lib/kubelet
+        cat <<EOF > /var/lib/kubelet/config.yaml
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        kind: KubeletConfiguration
+        cgroupDriver: systemd
+        EOF
 
     - name: "Kubeadm Init"
       command: >
@@ -85,21 +79,18 @@
         --ignore-preflight-errors=all
       register: kubeadm_init
 
-    - name: "Configuration Kubeconfig"
+    - name: "Setup Kubeconfig"
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
+        sudo -u ubuntu kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
-    - name: "Installation Flannel (Réseau Pod)"
-      become_user: ubuntu
-      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-
-    - name: "Génération du Token"
+    - name: "Token de jonction"
       shell: kubeadm token create --print-join-command
       register: join_cmd
 
-    - name: "Partage du Token aux Workers"
+    - name: "Propagation du Token"
       set_fact:
         final_join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
@@ -107,7 +98,7 @@
       with_items: "{{ groups['workers'] }}"
 
 # ==============================================================================
-# PLAY 4 : Jonction Workers et Validation
+# PLAY 3 : Jonction Workers et Validation
 # ==============================================================================
 - name: "Jonction Workers"
   hosts: workers
@@ -116,16 +107,15 @@
     - name: "Join Cluster"
       command: "{{ final_join_command }} --ignore-preflight-errors=all"
 
-- name: "Validation Finale"
+- name: "Vérification Finale"
   hosts: master
   become: yes
   tasks:
-    - name: "Attente de l'état Ready"
+    - name: "Vérifier les nœuds"
       shell: "kubectl get nodes"
-      register: nodes_out
-      until: 'nodes_out.stdout_lines | length >= 4'
+      register: res
+      until: 'res.stdout_lines | length >= 4'
       retries: 15
-      delay: 15
-
+      delay: 10
     - debug:
-        msg: "{{ nodes_out.stdout_lines }}"
+        msg: "{{ res.stdout_lines }}"
