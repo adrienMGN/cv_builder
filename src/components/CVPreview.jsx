@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react'
+import { forwardRef } from 'react'
 import './CVPreview.css'
 import { Mail, Phone, MapPin, Linkedin, Globe, Briefcase, GraduationCap, Code, Languages, Award, ExternalLink, Github } from 'lucide-react'
 
@@ -131,7 +131,7 @@ const CVPreview = forwardRef(({ cvData, theme }, ref) => {
                   </div>
                   <div className="cert-meta">
                     <p className="date">{cert.year}</p>
-                    {cert.link && renderLink(cert.link, 
+                    {cert.link && renderLink(cert.link,
                       <span className="verify-link">
                         <ExternalLink size={14} /> Vérifier
                       </span>
@@ -155,7 +155,7 @@ const CVPreview = forwardRef(({ cvData, theme }, ref) => {
                 <div className="custom-header">
                   <h4>
                     {item.title}
-                    {item.link && renderLink(item.link, 
+                    {item.link && renderLink(item.link,
                       <ExternalLink size={16} className="item-link-icon" />
                     )}
                   </h4>
@@ -229,5 +229,7 @@ const CVPreview = forwardRef(({ cvData, theme }, ref) => {
     </div>
   )
 })
+
+CVPreview.displayName = 'CVPreview'
 
 export default CVPreview
