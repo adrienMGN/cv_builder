@@ -28,29 +28,39 @@ pipeline {
                 """
             }
         }
-
+        
         stage('Provision Kubernetes Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        # 1. Nettoyage rapide des anciens fichiers qui perturbent la détection
-                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "rm -f /usr/local/bin/kubectl /usr/bin/kubectl /etc/kubernetes/admin.conf"
+                        # 1. Nettoyage radical des traces de l'ancien cluster sur TOUS les nœuds
+                        # On le fait avant de faire le 'cd', donc le chemin vers hosts.ini est direct
+                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
+                            kubeadm reset -f || true;
+                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d /usr/local/bin/kubectl /usr/local/bin/kubeadm /usr/bin/kubectl /root/.kube /home/ubuntu/.kube /home/baltroo/.kube;
+                            ip link delete cni0 || true;
+                            ip link delete flannel.1 || true;
+                            systemctl stop kubelet || true
+                        "
         
-                        # 2. Execution de Kubespray
+                        # 2. On entre dans le dossier Kubespray
                         cd ${KUBESPRAY_DIR}
+        
+                        # 3. Execution de Kubespray avec nettoyage du cache Ansible
+                        # On utilise '../jenkins/hosts.ini' car on vient de faire un 'cd'
                         ${VENV_PATH}/bin/ansible-playbook -i ../jenkins/hosts.ini \
                             --flush-cache \
                             -b --become-user=root \
-                            ./cluster.yml \
+                            cluster.yml \
                             -e container_manager=containerd \
                             -e kube_network_plugin=calico \
                             -e ignore_assert_errors=yes \
-                            -e skip_downloads=false
+                            -e skip_downloads=false \
+                            -e reset_nodes=false
                     """
                 }
             }
         }
-    }
 
     post {
         always {
