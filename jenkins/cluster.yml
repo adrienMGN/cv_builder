@@ -16,9 +16,9 @@
         modprobe overlay && modprobe br_netfilter
         echo -e "overlay\nbr_netfilter" > /etc/modules-load.d/k8s.conf
 
-    - name: "Installation Containerd"
+    - name: "Installation Containerd et dépendances"
       apt:
-        name: [containerd, socat, conntrack, iptables]
+        name: [containerd, socat, conntrack, iptables, curl]
         state: present
         update_cache: yes
       ignore_errors: yes
@@ -66,8 +66,13 @@
     - name: "Configuration kubeadm-flags"
       shell: |
         mkdir -p /var/lib/kubelet
-        # On force kubelet à utiliser systemd comme driver de cgroup pour containerd
         echo 'KUBELET_KUBEADM_ARGS="--container-runtime-endpoint=unix:///var/run/containerd/containerd.sock --pod-infra-container-image=registry.k8s.io/pause:3.10"' > /var/lib/kubelet/kubeadm-flags.env
+
+    - name: "Créer le dossier de configuration kubelet (FIX)"
+      file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: directory
+        mode: '0755'
 
     - name: "Création de la conf kubeadm pour kubelet"
       copy:
@@ -91,7 +96,7 @@
   hosts: master
   become: yes
   tasks:
-    - name: "Kubeadm Reset (Nettoyage avant Init)"
+    - name: "Kubeadm Reset (Nettoyage)"
       command: /usr/bin/kubeadm reset -f
 
     - name: "Initialiser le cluster"
@@ -137,4 +142,26 @@
       command: /usr/bin/kubeadm reset -f
 
     - name: "Rejoindre le cluster"
-      command: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
+      # On s'assure d'appeler le binaire v1.31 téléchargé
+      shell: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
+
+# ==============================================================================
+# PLAY 4 : Validation Finale
+# ==============================================================================
+- name: "Validation du Cluster"
+  hosts: master
+  become: yes
+  tasks:
+    - name: "Attendre que les 3 nœuds soient Ready"
+      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
+      register: ready_count
+      until: ready_count.stdout|int >= 3
+      retries: 24
+      delay: 10
+
+    - name: "Afficher l'état final du cluster"
+      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide"
+      register: nodes_list
+
+    - debug:
+        msg: "{{ nodes_list.stdout_lines }}"
