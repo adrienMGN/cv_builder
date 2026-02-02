@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         VENV_PATH = "${WORKSPACE}/venv_ansible"
-        MASTER_IP = "100.120.92.90" // Ton IP Master
+        MASTER_IP = "100.120.92.90" 
     }
 
     stages {
@@ -23,16 +23,14 @@ pipeline {
             }
         }
 
-        stage('Clean Residuals') {
+        stage('Clean Nodes') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        # On s'assure qu'aucun vieux k8s ou k3s ne tourne
+                        echo "Nettoyage des résidus sur Master et Worker 03..."
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
-                            (k3s-uninstall.sh || true);
-                            (k3s-agent-uninstall.sh || true);
-                            kubeadm reset -f || true;
-                            systemctl stop kubelet || true;
+                            if [ -f /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh; fi;
+                            if [ -f /usr/local/bin/k3s-agent-uninstall.sh ]; then /usr/local/bin/k3s-agent-uninstall.sh; fi;
                             rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /etc/kubernetes /usr/local/bin/kubectl
                         "
                     """
@@ -40,12 +38,11 @@ pipeline {
             }
         }
 
-        stage('Provision K3s Master') {
+        stage('Install K3s Master') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
                         echo "Installation du Master K3s..."
-                        # On installe le master sans traefik pour gagner du temps/ressources (optionnel)
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
                             curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--disable traefik --node-name master-node-01' sh -
                         "
@@ -54,42 +51,42 @@ pipeline {
             }
         }
 
-        stage('Install K3s Workers') {
-                    steps {
-                        sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                            script {
-                                // 1. Récupération propre du token sur le master
-                                // On utilise -o BatchMode=yes pour éviter les blocages SSH
-                                def rawToken = sh(
-                                    script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a 'cat /var/lib/rancher/k3s/server/node-token'",
-                                    returnStdout: true
-                                ).trim()
-                                
-                                // On cherche la ligne qui contient le token (format K10...)
-                                def k3sToken = rawToken.readLines().find { it.contains("K10") }?.split()?.last()?.trim()
-        
-                                if (!k3sToken) {
-                                    error "ERREUR : Impossible de lire le token sur le master. Vérifie que le master est bien lancé."
-                                }
-        
-                                echo "Token récupéré : ${k3sToken}"
-        
-                                // 2. Installation sur les workers avec journalisation
-                                // On ajoute --node-ip pour forcer l'usage de l'IP Tailscale
-                                sh """
-                                    ${VENV_PATH}/bin/ansible workers -i jenkins/hosts.ini -b -m shell -a "
-                                        curl -sfL https://get.k3s.io | K3S_URL=https://100.120.92.90:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name {{ inventory_hostname }}
-                                    "
-                                """
-                            }
+        stage('Install K3s Worker 03') {
+            steps {
+                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                    script {
+                        // Récupération du token
+                        def rawOutput = sh(
+                            script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a 'cat /var/lib/rancher/k3s/server/node-token'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Nettoyage précis : on cherche la chaîne qui commence par K10
+                        def matcher = (rawOutput =~ /K10[a-f0-9:]+::server:[a-f0-9]+/)
+                        if (!matcher) {
+                            error "Token K3s introuvable dans la sortie Ansible."
                         }
+                        def k3sToken = matcher[0]
+
+                        echo "Token valide extrait : \${k3sToken.substring(0, 15)}..."
+
+                        // Installation sur le worker-node-03
+                        // On utilise le groupe 'kube_node' de ton hosts.ini
+                        sh """
+                            ${VENV_PATH}/bin/ansible kube_node -i jenkins/hosts.ini -b -m shell -a "
+                                curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name worker-node-03
+                            "
+                        """
                     }
                 }
+            }
+        }
+
         stage('Verify Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Vérification finale..."
+                        echo "Etat du cluster :"
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "kubectl get nodes"
                     """
                 }
