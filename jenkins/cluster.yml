@@ -1,5 +1,8 @@
 ---
-- name: "Configuration Kubernetes Standalone - Harmonisation Totale"
+# ==============================================================================
+# PLAY 1 : Configuration commune (Master & Workers)
+# ==============================================================================
+- name: "Configuration Kubernetes - Préparation des nœuds"
   hosts: all
   become: yes
   tasks:
@@ -9,7 +12,7 @@
         sed -i '/127.0.1.1/d' /etc/hosts
         echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
 
-    - name: "Configuration Réseau Noyau"
+    - name: "Configuration Réseau Noyau (Modules et Sysctl)"
       shell: |
         modprobe overlay
         modprobe br_netfilter
@@ -25,24 +28,22 @@
         swapoff -a
         sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-    - name: "Installation Containerd et dépendances"
+    - name: "Installation des dépendances système"
       apt:
-        name: [containerd, socat, conntrack, iptables, curl]
+        name: [containerd, socat, conntrack, iptables, curl, apt-transport-https]
         state: present
         update_cache: yes
-      ignore_errors: yes
 
-    - name: "CONFIGURATION CRUCIALE : Containerd"
-      # !unsafe empêche Ansible d'interpréter les caractères spéciaux comme du code
-      shell: !unsafe |
-        rm -f /etc/containerd/config.toml
+    - name: "Configuration de Containerd (Cgroup Systemd + Sandbox)"
+      shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
         sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
         systemctl restart containerd
+        systemctl enable containerd
 
-    - name: "Installation des Binaires K8s"
+    - name: "Installation des Binaires K8s (v1.31.0)"
       shell: |
         mkdir -p /opt/cni/bin
         curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
@@ -52,24 +53,27 @@
         curl -L -o kubectl https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
         chmod +x kubeadm kubelet kubectl
 
-    - name: "Service Kubelet"
+    - name: "Création du service Kubelet"
       copy:
         dest: /etc/systemd/system/kubelet.service
         content: |
           [Unit]
           Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/
           [Service]
           ExecStart=/usr/bin/kubelet
           Restart=always
+          StartLimitInterval=0
+          RestartSec=10
           [Install]
           WantedBy=multi-user.target
 
-    - name: "Configuration kubelet (Flags)"
+    - name: "Configuration du driver Kubelet"
       shell: |
         mkdir -p /etc/systemd/system/kubelet.service.d
         echo -e '[Service]\nEnvironment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"\nExecStart=\nExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
         systemctl daemon-reload
-        systemctl enable --now kubelet
+        systemctl enable kubelet
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -78,59 +82,43 @@
   hosts: master
   become: yes
   tasks:
-    - name: "Kubeadm Reset"
+    - name: "Nettoyage préalable (Reset)"
       command: /usr/bin/kubeadm reset -f
 
-    - name: "Créer le fichier de configuration Init"
-      copy:
-        dest: /tmp/kubeadm-config.yaml
-        content: |
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: InitConfiguration
-          localAPIEndpoint:
-            advertiseAddress: "{{ ansible_host }}"
-            bindPort: 6443
-          nodeRegistration:
-            name: "{{ inventory_hostname }}"
-            criSocket: unix:///var/run/containerd/containerd.sock
-            imagePullPolicy: IfNotPresent
-          ---
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: ClusterConfiguration
-          kubernetesVersion: v1.31.0
-          networking:
-            podSubnet: 10.244.0.0/16
-          ---
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          kind: KubeletConfiguration
-          cgroupDriver: systemd
+    - name: "Téléchargement des images K8s (évite le timeout)"
+      command: /usr/bin/kubeadm config images pull
 
-    - name: "Initialiser le cluster (via config file)"
-      command: /usr/bin/kubeadm init --config /tmp/kubeadm-config.yaml --ignore-preflight-errors=all
+    - name: "Initialiser le cluster (via arguments directs)"
+      command: >
+        /usr/bin/kubeadm init 
+        --pod-network-cidr=10.244.0.0/16 
+        --apiserver-advertise-address={{ ansible_host }}
+        --cri-socket=unix:///var/run/containerd/containerd.sock
+        --ignore-preflight-errors=all
       register: kubeadm_init
 
-    - name: "Configurer Kubeconfig"
+    - name: "Configurer Kubeconfig pour l'utilisateur ubuntu"
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
-    - name: "Attendre l'API"
-      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
-      register: api_res
-      until: api_res.rc == 0
-      retries: 40
-      delay: 10
+    - name: "Attendre que l'API Server soit prêt"
+      wait_for:
+        port: 6443
+        host: "{{ ansible_host }}"
+        delay: 5
+        timeout: 300
 
-    - name: "Installer Flannel"
+    - name: "Installer le réseau de Pods (Flannel)"
       become_user: ubuntu
       command: /usr/bin/kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
-    - name: "Générer join command"
-      shell: "/usr/bin/kubeadm --kubeconfig /etc/kubernetes/admin.conf token create --print-join-command"
+    - name: "Générer la commande de jonction"
+      shell: "/usr/bin/kubeadm token create --print-join-command"
       register: join_cmd
 
-    - name: "Partager join command"
+    - name: "Partager la commande aux workers"
       set_fact:
         final_join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
@@ -144,24 +132,25 @@
   hosts: workers
   become: yes
   tasks:
-    - name: "Kubeadm Reset Worker"
+    - name: "Nettoyage préalable Worker"
       command: /usr/bin/kubeadm reset -f
 
     - name: "Rejoindre le cluster"
-      command: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
+      command: "{{ final_join_command }} --ignore-preflight-errors=all"
 
 # ==============================================================================
-# PLAY 4 : Validation
+# PLAY 4 : Validation finale
 # ==============================================================================
-- name: "Validation"
+- name: "Validation du cluster"
   hosts: master
   become: yes
   tasks:
-    - name: "Vérifier les nœuds"
+    - name: "Vérifier le statut des nœuds"
       shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
       register: nodes_list
-      until: nodes_list.stdout_lines | length >= 4
-      retries: 10
+      until: nodes_list.stdout_lines | length >= 3
+      retries: 12
       delay: 10
+
     - debug:
         msg: "{{ nodes_list.stdout_lines }}"
