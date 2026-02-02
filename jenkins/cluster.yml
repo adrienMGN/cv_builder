@@ -21,11 +21,13 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage des verrous APT"
+    - name: "FORCE : Tuer les processus APT bloqués"
       shell: |
+        killall apt apt-get dpkg || true
         rm -f /var/lib/apt/lists/lock
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
+        dpkg --configure -a
       ignore_errors: yes
 
     - name: "Installation des pré-requis"
@@ -90,12 +92,12 @@
     - name: "Ajouter le dépôt Kubernetes v1.31 (Fix Force 2026)"
       copy:
         dest: /etc/apt/sources.list.d/kubernetes.list
-        # Utilisation de [trusted=yes] ET [signed-by] pour bypasser les erreurs de signature v3 en 2026
         content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
 
-    - name: "Installer Kubeadm, Kubelet et Kubectl"
+    - name: "Désinstaller et réinstaller proprement K8s v1.31"
       shell: |
         apt-mark unhold kubelet kubeadm kubectl || true
+        apt-get remove -y kubelet kubeadm kubectl --purge || true
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
@@ -179,7 +181,6 @@
     - name: "Attendre que les nœuds soient Ready"
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
       register: ready_count
-      # On attend que le Master + les 2 Workers soient Ready (total = 3)
       until: ready_count.stdout|int >= 3
       retries: 20
       delay: 15
