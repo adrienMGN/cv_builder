@@ -29,16 +29,19 @@ pipeline {
 
         stage('Provision Kubernetes Cluster') {
             steps {
-                ansiblePlaybook(
-                    playbook: '/var/jenkins_home/workspace/provisioning/cluster.yml',
-                    credentialsId: "${ANSI_SSH_CREDS}",
-                    // On passe souvent l'utilisateur distant si ce n'est pas "jenkins"
-                    extraVars: [
-                        ansible_become: true // Pour exécuter en sudo
-                    ],
-                    installation: 'ansible-default', // Nom configuré dans Global Tool Configuration
-                    colorized: true
-                )
+                // Jenkins charge les deux clés dans l'agent SSH en mémoire
+                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                    ansiblePlaybook(
+                        playbook: "${WORKSPACE}/cluster.yml",
+                        inventory: "${WORKSPACE}/hosts.ini",
+                        // IMPORTANT : On ne met pas de credentialsId ici car ils sont dans l'agent
+                        extraVars: [
+                            ansible_become: true
+                        ],
+                        installation: 'ansible-default',
+                        colorized: true
+                    )
+                }
             }
         }
     }
