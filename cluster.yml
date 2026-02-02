@@ -1,8 +1,8 @@
 ---
 # ==============================================================================
-# PLAY 0 : Reset Total (Master & Workers)
+# PLAY 0 : Reset Total
 # ==============================================================================
-- name: Reset complet du cluster (Nettoyage de sécurité)
+- name: Reset complet du cluster
   hosts: all
   become: yes
   tasks:
@@ -16,12 +16,11 @@
         rm -rf /var/lib/kubelet/*
         rm -rf /var/lib/etcd
         rm -rf /etc/kubernetes/*
-        ip link delete cni0 || true
-        ip link delete flannel.1 || true
+        rm -rf $HOME/.kube
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration des Hostnames
+# PLAY 1 : Hostnames
 # ==============================================================================
 - name: Unification des Hostnames
   hosts: all
@@ -32,47 +31,34 @@
         name: "{{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 2 : Préparation Système & Containerd
+# PLAY 2 : Préparation Système
 # ==============================================================================
 - name: Préparation des composants
   hosts: all
   become: yes
   tasks:
-    - name: Charger les modules noyau
-      modprobe:
-        name: "{{ item }}"
-        state: present
-      loop: [overlay, br_netfilter]
-
-    - name: Configurer Sysctl
-      sysctl:
-        name: "{{ item }}"
-        value: '1'
-        state: present
-      loop:
-        - net.bridge.bridge-nf-call-iptables
-        - net.bridge.bridge-nf-call-ip6tables
-        - net.ipv4.ip_forward
+    - name: Charger les modules et configurer sysctl
+      shell: |
+        modprobe overlay && modprobe br_netfilter
+        cat <<EOF | tee /etc/sysctl.d/k8s.conf
+        net.bridge.bridge-nf-call-iptables  = 1
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.ipv4.ip_forward                 = 1
+        EOF
+        sysctl --system
 
     - name: Configurer Containerd (SystemdCgroup)
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-      notify: Restart containerd
+        systemctl restart containerd
 
-    - name: Démarrer les services
+    - name: Démarrer kubelet
       service:
-        name: "{{ item }}"
+        name: kubelet
         state: started
         enabled: yes
-      loop: [containerd, kubelet]
-
-  handlers:
-    - name: Restart containerd
-      service:
-        name: containerd
-        state: restarted
 
 # ==============================================================================
 # PLAY 3 : Initialisation du Master
@@ -84,19 +70,24 @@
     - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
 
-    - name: Configurer le dossier .kube pour Ansible/Root
+    - name: Rafraîchir Kubeconfig (Correctif TLS)
       shell: |
+        rm -rf $HOME/.kube
         mkdir -p $HOME/.kube
-        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
         chown $(id -u):$(id -g) $HOME/.kube/config
+        # Purge du cache kubectl pour éviter l'erreur TLS
+        rm -rf $HOME/.kube/cache
 
     - name: Attendre l'API Server
       wait_for:
         port: 6443
+        delay: 5
         timeout: 60
 
-    - name: Installer Flannel
-      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+    - name: Installer Flannel (Bypass TLS cache)
+      # On utilise directement le fichier admin.conf pour être 100% sûr des certificats
+      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
 
 # ==============================================================================
 # PLAY 4 : Join des Workers
@@ -121,7 +112,7 @@
       command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 5 : Attente de l'état READY (100% stable)
+# PLAY 5 : Validation
 # ==============================================================================
 - name: Validation finale
   hosts: master
@@ -130,13 +121,13 @@
     - name: Attendre que les 3 noeuds soient Ready
       shell: "kubectl get nodes | grep ' Ready ' | wc -l"
       register: nodes_ready
-      until: nodes_ready.stdout|int == groups['all']|length
+      until: nodes_ready.stdout|int == 3
       retries: 40
       delay: 30
       changed_when: false
 
-    - name: Afficher le résultat
+    - name: Statut final
       command: kubectl get nodes
-      register: final_status
+      register: res
     - debug:
-        var: final_status.stdout_lines
+        var: res.stdout_lines
