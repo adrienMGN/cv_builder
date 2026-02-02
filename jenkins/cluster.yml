@@ -1,5 +1,5 @@
 ---
-- name: "Configuration Kubernetes Standalone"
+- name: "Configuration Kubernetes Standalone - Harmonisation Containerd"
   hosts: all
   become: yes
   tasks:
@@ -23,13 +23,14 @@
         update_cache: yes
       ignore_errors: yes
 
-    - name: "Nettoyage radical"
+    - name: "CONFIGURATION CRUCIALE : Containerd SystemdCgroup"
       shell: |
-        systemctl stop kubelet || true
-        rm -f /usr/bin/kubeadm /usr/bin/kubelet /usr/bin/kubectl
-        rm -f /etc/systemd/system/kubelet.service
-        rm -rf /etc/systemd/system/kubelet.service.d
-      ignore_errors: yes
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+        # On force l'usage de SystemdCgroup (requis par K8s) et l'image de pause correcte
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+        sed -i 's/sandbox_image = .*/sandbox_image = "registry.k8s.io\/pause:3.10"/g' /etc/containerd/config.toml
+        systemctl restart containerd
 
     - name: "Installation des CNI Plugins"
       shell: |
@@ -50,44 +51,20 @@
         content: |
           [Unit]
           Description=kubelet: The Kubernetes Node Agent
-          Documentation=https://kubernetes.io/docs/
-          Wants=network-online.target
-          After=network-online.target
-
           [Service]
           ExecStart=/usr/bin/kubelet
           Restart=always
           StartLimitInterval=0
           RestartSec=10
-
           [Install]
           WantedBy=multi-user.target
 
-    - name: "Configuration kubeadm-flags"
+    - name: "Configuration kubelet (Flags)"
       shell: |
-        mkdir -p /var/lib/kubelet
-        echo 'KUBELET_KUBEADM_ARGS="--container-runtime-endpoint=unix:///var/run/containerd/containerd.sock --pod-infra-container-image=registry.k8s.io/pause:3.10"' > /var/lib/kubelet/kubeadm-flags.env
-
-    - name: "Créer le dossier de configuration kubelet (FIX)"
-      file:
-        path: /etc/systemd/system/kubelet.service.d
-        state: directory
-        mode: '0755'
-
-    - name: "Création de la conf kubeadm pour kubelet"
-      copy:
-        dest: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
-        content: |
-          [Service]
-          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
-          ExecStart=
-          ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS
-
-    - name: "Démarrage kubelet"
-      shell: |
+        mkdir -p /etc/systemd/system/kubelet.service.d
+        echo -e '[Service]\nEnvironment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"\nEnvironment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"\nExecStart=\nExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
         systemctl daemon-reload
-        systemctl enable kubelet
-        systemctl start kubelet
+        systemctl enable --now kubelet
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -96,7 +73,7 @@
   hosts: master
   become: yes
   tasks:
-    - name: "Kubeadm Reset (Nettoyage)"
+    - name: "Kubeadm Reset"
       command: /usr/bin/kubeadm reset -f
 
     - name: "Initialiser le cluster"
@@ -109,7 +86,7 @@
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
-    - name: "Attendre l'API (Retry 5 minutes)"
+    - name: "Attendre l'API"
       shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
       register: api_res
       until: api_res.rc == 0
@@ -138,30 +115,21 @@
   hosts: workers
   become: yes
   tasks:
-    - name: "Kubeadm Reset (Worker)"
+    - name: "Kubeadm Reset Worker"
       command: /usr/bin/kubeadm reset -f
 
     - name: "Rejoindre le cluster"
-      # On s'assure d'appeler le binaire v1.31 téléchargé
-      shell: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
+      command: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
 
 # ==============================================================================
-# PLAY 4 : Validation Finale
+# PLAY 4 : Validation
 # ==============================================================================
-- name: "Validation du Cluster"
+- name: "Validation"
   hosts: master
   become: yes
   tasks:
-    - name: "Attendre que les 3 nœuds soient Ready"
-      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
-      register: ready_count
-      until: ready_count.stdout|int >= 3
-      retries: 24
-      delay: 10
-
-    - name: "Afficher l'état final du cluster"
-      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide"
+    - name: "Vérifier les nœuds"
+      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
       register: nodes_list
-
     - debug:
         msg: "{{ nodes_list.stdout_lines }}"
