@@ -2,16 +2,19 @@ pipeline {
     agent any
     
     environment {
-        REGISTRY = "152.228.130.229:5000"
+        // IP de la machine où tourne le conteneur Registry
+        REGISTRY = "100.77.150.49:5000"
         VITE_API_URL = "http://152.228.130.229:30001"
+        // Chemin vers le kubeconfig récupéré du master
+        KUBECONFIG_PATH = "${WORKSPACE}/kubeconfig-k3s"
     }
 
     stages {
         stage('Build & Push Backend') {
             steps {
                 script {
-                    echo "Building Backend..."
                     dir('backend') {
+                        // On utilise --network host si le registry est sur la même machine que Jenkins
                         sh "docker build -t ${REGISTRY}/cv-backend:latest ."
                         sh "docker push ${REGISTRY}/cv-backend:latest"
                     }
@@ -22,10 +25,23 @@ pipeline {
         stage('Build & Push Frontend') {
             steps {
                 script {
-                    echo "Building Frontend..."
-                    // On passe l'URL de l'API au build Vite
-                    sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
-                    sh "docker push ${REGISTRY}/cv-frontend:latest"
+                    dir('frontend') {
+                        sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
+                        sh "docker push ${REGISTRY}/cv-frontend:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Kubeconfig') {
+            steps {
+                // On récupère le config du master pour pouvoir piloter le cluster depuis Jenkins
+                sshagent(['master-specific-key']) {
+                    sh """
+                        scp -o StrictHostKeyChecking=no root@100.120.92.90:/etc/rancher/k3s/k3s.yaml ${KUBECONFIG_PATH}
+                        sed -i 's/127.0.0.1/100.120.92.90/g' ${KUBECONFIG_PATH}
+                        chmod 600 ${KUBECONFIG_PATH}
+                    """
                 }
             }
         }
@@ -33,12 +49,12 @@ pipeline {
         stage('Kubernetes Deploy') {
             steps {
                 script {
-                    echo "Applying K8s manifests..."
-                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f k8s/app-full.yaml"
+                    // Application des manifestes
+                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} apply -f k8s/app-full.yaml"
                     
-                    // Force le redémarrage pour charger les nouvelles images
-                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/frontend"
-                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/backend"
+                    // On attend que le déploiement soit prêt ou on force le refresh
+                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} rollout restart deployment/frontend"
+                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} rollout restart deployment/backend"
                 }
             }
         }
@@ -46,9 +62,11 @@ pipeline {
     
     post {
         success {
-            echo "Application en ligne !"
-            echo "Frontend : http://152.228.130.229:30000"
-            echo "API : http://152.228.130.229:30001"
+            echo "Déploiement terminé avec succès."
+        }
+        always {
+            // Sécurité : on supprime le kubeconfig temporaire
+            sh "rm -f ${KUBECONFIG_PATH}"
         }
     }
 }
