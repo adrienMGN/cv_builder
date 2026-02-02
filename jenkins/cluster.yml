@@ -21,7 +21,7 @@
       args:
         executable: /bin/bash
 
-    - name: "FORCE : Tuer les processus APT bloqués"
+    - name: "Nettoyage radical des processus et verrous APT"
       shell: |
         killall apt apt-get dpkg || true
         rm -f /var/lib/apt/lists/lock
@@ -37,27 +37,6 @@
         update_cache: yes
       ignore_errors: yes
 
-    - name: "Configurer les modules Kernel"
-      copy:
-        dest: /etc/modules-load.d/k8s.conf
-        content: |
-          overlay
-          br_netfilter
-
-    - name: "Appliquer les modules Kernel"
-      shell: modprobe overlay && modprobe br_netfilter
-
-    - name: "Configurer Sysctl"
-      copy:
-        dest: /etc/sysctl.d/k8s.conf
-        content: |
-          net.bridge.bridge-nf-call-iptables  = 1
-          net.bridge.bridge-nf-call-ip6tables = 1
-          net.ipv4.ip_forward                 = 1
-
-    - name: "Appliquer Sysctl"
-      command: sysctl --system
-
     - name: "Configuration de Containerd"
       shell: |
         mkdir -p /etc/containerd
@@ -67,39 +46,29 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage radical des anciens dépôts"
-      file:
-        path: "{{ item }}"
-        state: absent
-      with_items:
-        - /etc/apt/sources.list.d/kubernetes.list
-        - /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-
-    - name: "Créer le dossier keyrings"
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: "Télécharger la clé GPG Kubernetes"
-      get_url:
-        url: https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key
-        dest: /tmp/k8s-release.key
-
-    - name: "Désarchiver la clé GPG"
-      shell: cat /tmp/k8s-release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-
-    - name: "Ajouter le dépôt Kubernetes v1.31 (Fix Force 2026)"
-      copy:
-        dest: /etc/apt/sources.list.d/kubernetes.list
-        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
-
-    - name: "Désinstaller et réinstaller proprement K8s v1.31"
+    - name: "Nettoyage des anciens dépôts et binaires"
       shell: |
         apt-mark unhold kubelet kubeadm kubectl || true
         apt-get remove -y kubelet kubeadm kubectl --purge || true
+        rm -rf /etc/apt/sources.list.d/kubernetes.list
+        rm -rf /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+        # On supprime les binaires résiduels qui pourraient polluer le PATH
+        rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl
+      ignore_errors: yes
+
+    - name: "Installation du dépôt v1.31"
+      shell: |
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+      args:
+        executable: /bin/bash
+
+    - name: "Installer K8s v1.31 (VERSION CIBLÉE)"
+      shell: |
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-        apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
+        # On force l'installation de la version 1.31 présente dans le dépôt
+        apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet=1.31* kubeadm=1.31* kubectl=1.31*
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
@@ -136,17 +105,9 @@
         owner: ubuntu
         group: ubuntu
 
-    - name: "Attendre que le Control Plane soit stable"
-      pause:
-        seconds: 30
-
     - name: "Installer le plugin réseau Flannel"
       become_user: ubuntu
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      register: flannel_res
-      until: flannel_res.rc == 0
-      retries: 5
-      delay: 10
 
     - name: "Générer la commande de join"
       command: kubeadm --kubeconfig=/etc/kubernetes/admin.conf token create --print-join-command
@@ -167,6 +128,7 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
+      # On ajoute --ignore-preflight-errors=all au cas où un warning persisterait
       command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
@@ -184,9 +146,3 @@
       until: ready_count.stdout|int >= 3
       retries: 20
       delay: 15
-
-    - name: "Afficher l'état final"
-      command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
-      register: final_res
-    - debug:
-        msg: "{{ final_res.stdout_lines }}"
