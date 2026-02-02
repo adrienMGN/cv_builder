@@ -25,13 +25,10 @@
 
     - name: "PURGE PHYSIQUE : Supprimer tous les binaires K8s existants"
       shell: |
-        # On arrête le service si il existe
         systemctl stop kubelet || true
-        # On supprime les binaires de TOUS les emplacements possibles
         rm -f /usr/bin/kubeadm /usr/bin/kubelet /usr/bin/kubectl
         rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl
         rm -f /bin/kubeadm /bin/kubelet /bin/kubectl
-        # On nettoie les paquets apt au cas où
         apt-get remove -y kubeadm kubelet kubectl --purge || true
       ignore_errors: yes
 
@@ -85,18 +82,25 @@
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
-    - name: "Installer Flannel"
+    - name: "Installer Flannel (avec attente de l'API)"
       become_user: ubuntu
       command: /usr/bin/kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      register: flannel_res
+      until: flannel_res.rc == 0
+      retries: 12
+      delay: 10
 
     - name: "Générer la commande de join"
-      # On force l'utilisation de admin.conf et le chemin absolu
+      # On utilise kubeconfig pour éviter l'erreur TLS
       shell: "/usr/bin/kubeadm --kubeconfig /etc/kubernetes/admin.conf token create --print-join-command"
       register: join_cmd
+      until: join_cmd.rc == 0
+      retries: 5
+      delay: 10
 
     - name: "Partager la commande de join"
       set_fact:
-        # On s'assure que la commande commence par /usr/bin/kubeadm
+        # On injecte le chemin absolu dans la commande pour les workers
         final_join_command: "/usr/bin/{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
@@ -121,8 +125,15 @@
   hosts: master
   become: yes
   tasks:
-    - name: "Vérifier les nœuds"
-      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
-      register: final_res
+    - name: "Attendre que les nœuds soient Ready"
+      shell: "/usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
+      register: ready_count
+      until: ready_count.stdout|int >= 3
+      retries: 20
+      delay: 15
+    
+    - name: "Résultat Final"
+      shell: "/usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
+      register: nodes_list
     - debug:
-        msg: "{{ final_res.stdout_lines }}"
+        msg: "{{ nodes_list.stdout_lines }}"
