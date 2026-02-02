@@ -1,5 +1,5 @@
 ---
-- name: "Configuration Kubernetes par Binaires Directs (Sans APT)"
+- name: "Configuration Kubernetes par Binaires Directs"
   hosts: all
   become: yes
   tasks:
@@ -16,9 +16,9 @@
         modprobe overlay && modprobe br_netfilter
         echo -e "overlay\nbr_netfilter" > /etc/modules-load.d/k8s.conf
 
-    - name: "Installation Containerd (seule dépendance APT)"
+    - name: "Installation des dépendances système"
       apt:
-        name: [containerd, socat, conntrack]
+        name: [containerd, socat, conntrack, ebtables, ethtool]
         state: present
         update_cache: yes
       ignore_errors: yes
@@ -30,29 +30,58 @@
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
         systemctl restart containerd
 
-    - name: "Téléchargement et Installation des Binaires K8s v1.31.0"
+    - name: "Installation des CNI Plugins"
       shell: |
-        CNI_PLUGINS_VERSION="v1.3.0"
-        ARCH="amd64"
-        DEST="/usr/bin"
-        
-        # 1. Installer CNI Plugins
         mkdir -p /opt/cni/bin
-        curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_VERSION}/cni-plugins-linux-${ARCH}-${CNI_PLUGINS_VERSION}.tgz" | tar -C /opt/cni/bin -xz
+        curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
 
-        # 2. Télécharger les binaires Kubernetes directement
+    - name: "Téléchargement des binaires K8s v1.31.0"
+      shell: |
         cd /usr/bin
         curl -L --remote-name-all https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/{kubeadm,kubelet,kubectl}
         chmod +x kubeadm kubelet kubectl
 
-    - name: "Configuration du Service Kubelet"
+    - name: "Création du fichier service kubelet"
+      copy:
+        dest: /etc/systemd/system/kubelet.service
+        content: |
+          [Unit]
+          Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          ExecStart=/usr/bin/kubelet
+          Restart=always
+          StartLimitInterval=0
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: "Création du dossier de conf kubeadm"
+      file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: directory
+
+    - name: "Création de la conf kubeadm pour kubelet"
+      copy:
+        dest: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+        content: |
+          [Service]
+          Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+          Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+          EnvironmentFile=-/etc/default/kubelet
+          ExecStart=
+          ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+
+    - name: "Démarrage du service kubelet"
       shell: |
-        # Téléchargement du fichier de service kubelet
-        curl -sSL "https://raw.githubusercontent.com/kubernetes/release/master/cmd/kubepkg/templates/latest/debian/kubelet.service" | sed "s:/usr/bin:/usr/bin:g" > /etc/systemd/system/kubelet.service
-        mkdir -p /etc/systemd/system/kubelet.service.d
-        curl -sSL "https://raw.githubusercontent.com/kubernetes/release/master/cmd/kubepkg/templates/latest/debian/10-kubeadm.conf" | sed "s:/usr/bin:/usr/bin:g" > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
         systemctl daemon-reload
-        systemctl enable --now kubelet
+        systemctl enable kubelet
+        systemctl start kubelet
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -95,7 +124,7 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
-      command: "{{ join_command }} --node-name {{ inventory_hostname }}"
+      command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
 
@@ -110,5 +139,11 @@
       shell: "kubectl get nodes | grep ' Ready ' | wc -l"
       register: ready_count
       until: ready_count.stdout|int >= 3
-      retries: 10
+      retries: 20
       delay: 15
+
+    - name: "Affichage final"
+      command: kubectl get nodes
+      register: final_res
+    - debug:
+        msg: "{{ final_res.stdout_lines }}"
