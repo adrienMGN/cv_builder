@@ -101,12 +101,20 @@
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
+    - name: "Attendre que l'API Server soit prêt"
+      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
+      register: api_check
+      until: api_check.rc == 0
+      retries: 20
+      delay: 10
+
     - name: "Installer Flannel"
       become_user: ubuntu
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
     - name: "Générer la commande de join"
-      command: kubeadm token create --print-join-command
+      # FIX : Utilisation explicite du kubeconfig pour éviter l'erreur TLS
+      command: kubeadm --kubeconfig /etc/kubernetes/admin.conf token create --print-join-command
       register: join_cmd
 
     - name: "Partager la commande de join"
@@ -136,14 +144,14 @@
   become: yes
   tasks:
     - name: "Attendre que les nœuds soient Ready"
-      shell: "kubectl get nodes | grep ' Ready ' | wc -l"
+      shell: "kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
       register: ready_count
       until: ready_count.stdout|int >= 3
       retries: 20
       delay: 15
 
     - name: "Affichage final"
-      command: kubectl get nodes
+      command: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes
       register: final_res
     - debug:
         msg: "{{ final_res.stdout_lines }}"
