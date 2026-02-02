@@ -32,7 +32,7 @@ pipeline {
                 // Jenkins charge les deux clés dans l'agent SSH en mémoire
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     ansiblePlaybook(
-                        playbook: "${WORKSPACE}/cluster.yml",
+                        playbook: "${WORKSPACE}/jenkins/cluster.yml",
                         inventory: "${WORKSPACE}/hosts.ini",
                         // IMPORTANT : On ne met pas de credentialsId ici car ils sont dans l'agent
                         extraVars: [
