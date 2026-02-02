@@ -22,16 +22,17 @@ pipeline {
             }
         }
 
-        stage('Build & Push Frontend') {
-            steps {
-                script {
-                    dir('frontend') {
+    stage('Build & Push Frontend') {
+                steps {
+                    script {
+                        echo "Building Frontend from Root..."
+                        // On ne change pas de répertoire (pas de dir('frontend'))
+                        // car le Dockerfile est à la racine.
                         sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
                         sh "docker push ${REGISTRY}/cv-frontend:latest"
                     }
                 }
             }
-        }
 
         stage('Prepare Kubeconfig') {
             steps {
