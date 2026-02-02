@@ -3,13 +3,13 @@ pipeline {
 
     environment {
         KUBESPRAY_DIR = "${WORKSPACE}/kubespray"
+        VENV_PATH     = "${WORKSPACE}/venv_kubespray"
     }
 
     stages {
         stage('Checkout Code') {
             steps {
                 checkout scm
-                // On clone Kubespray directement dans le workspace
                 sh "rm -rf ${KUBESPRAY_DIR}"
                 sh "git clone --depth 1 --branch v2.24.0 https://github.com/kubernetes-sigs/kubespray.git ${KUBESPRAY_DIR}"
             }
@@ -18,8 +18,12 @@ pipeline {
         stage('Install Kubespray Dependencies') {
             steps {
                 sh """
-                    # Installation des dépendances Python (nécessaire pour les modules k8s d'Ansible)
-                    pip install -r ${KUBESPRAY_DIR}/requirements.txt
+                    # Création du virtualenv
+                    python3 -m venv ${VENV_PATH}
+                    
+                    # Installation des dépendances à l'intérieur du venv
+                    ${VENV_PATH}/bin/pip install --upgrade pip
+                    ${VENV_PATH}/bin/pip install -r ${KUBESPRAY_DIR}/requirements.txt
                 """
             }
         }
@@ -27,20 +31,14 @@ pipeline {
         stage('Provision Kubernetes Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    ansiblePlaybook(
-                        // On utilise le playbook OFFICIEL de Kubespray
-                        playbook: "${KUBESPRAY_DIR}/cluster.yml",
-                        inventory: "${WORKSPACE}/jenkins/hosts.ini",
-                        extraVars: [
-                            ansible_become: true,
-                            // On force l'usage de Docker ou Containerd (Containerd est recommandé)
-                            container_manager: 'containerd',
-                            // On peut choisir le plugin réseau (calico, flannel, etc.)
-                            kube_network_plugin: 'calico'
-                        ],
-                        installation: 'ansible-default',
-                        colorized: true
-                    )
+                    // Utilisation de l'exécutable ansible-playbook du venv
+                    sh """
+                    ${VENV_PATH}/bin/ansible-playbook -i jenkins/hosts.ini \
+                        -b --become-user=root \
+                        ${KUBESPRAY_DIR}/cluster.yml \
+                        -e container_manager=containerd \
+                        -e kube_network_plugin=calico
+                    """
                 }
             }
         }
