@@ -1,116 +1,74 @@
-# --- MONGODB ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mongo
-spec:
-  selector:
-    matchLabels:
-      app: mongo
-  template:
-    metadata:
-      labels:
-        app: mongo
-    spec:
-      containers:
-      - name: mongo
-        image: mongo:7
-        ports:
-        - containerPort: 27017
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongo
-spec:
-  ports:
-    - port: 27017
-      targetPort: 27017
-  selector:
-    app: mongo
+pipeline {
+    agent any
+    
+    environment {
+        // IP de la machine où tourne le conteneur Registry
+        REGISTRY = "100.77.150.49:5000"
+        VITE_API_URL = "http://152.228.130.229:30001"
+        // Chemin vers le kubeconfig récupéré du master
+        KUBECONFIG_PATH = "${WORKSPACE}/kubeconfig-k3s"
+    }
 
----
-# --- BACKEND API ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backend
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: backend
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-      - name: backend
-        image: 100.77.150.49:5000/cv-backend:latest
-        env:
-        - name: MONGODB_URI
-          value: "mongodb://mongo:27017/cvbuilder"
-        - name: PORT
-          value: "5000"
-        - name: NODE_ENV
-          value: "production"
-        - name: ALLOWED_ORIGINS
-          value: "http://152.228.130.229:30000"
-        # Utilisation du Secret pour la clé API
-        - name: RESEND_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: backend-secrets
-              key: RESEND_API_KEY
-        ports:
-        - containerPort: 5000
----
-apiVersion: v1
-kind: Service
-metadata:
-  # NOM CHANGÉ de backend-service à backend pour le DNS Nginx
-  name: backend
-spec:
-  type: NodePort
-  selector:
-    app: backend
-  ports:
-    - port: 5000
-      targetPort: 5000
-      nodePort: 30001 
+    stages {
+        stage('Build & Push Backend') {
+            steps {
+                script {
+                    dir('backend') {
+                        // On utilise --network host si le registry est sur la même machine que Jenkins
+                        sh "docker build -t ${REGISTRY}/cv-backend:latest ."
+                        sh "docker push ${REGISTRY}/cv-backend:latest"
+                    }
+                }
+            }
+        }
 
----
-# --- FRONTEND ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: frontend
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: frontend
-  template:
-    metadata:
-      labels:
-        app: frontend
-    spec:
-      containers:
-      - name: frontend
-        image: 100.77.150.49:5000/cv-frontend:latest
-        ports:
-        - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: frontend-service
-spec:
-  type: NodePort
-  selector:
-    app: frontend
-  ports:
-    - port: 80
-      targetPort: 80
-      nodePort: 30000
+    stage('Build & Push Frontend') {
+                steps {
+                    script {
+                        echo "Building Frontend from Root..."
+                        // On ne change pas de répertoire (pas de dir('frontend'))
+                        // car le Dockerfile est à la racine.
+                        sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
+                        sh "docker push ${REGISTRY}/cv-frontend:latest"
+                    }
+                }
+            }
+
+        stage('Prepare Kubeconfig') {
+            steps {
+                // On récupère le config du master pour pouvoir piloter le cluster depuis Jenkins
+                sshagent(['master-specific-key']) {
+                    sh """
+                        scp -o StrictHostKeyChecking=no ubuntu@100.120.92.90:/etc/rancher/k3s/k3s.yaml ${KUBECONFIG_PATH}
+                        sed -i 's/127.0.0.1/100.120.92.90/g' ${KUBECONFIG_PATH}
+                        chmod 600 ${KUBECONFIG_PATH}
+                    """
+                }
+            }
+        }
+
+        stage('Kubernetes Deploy') {
+                    steps {
+                        script {
+                            echo "Applying K8s manifests..."
+                            // Ajout du flag --insecure-skip-tls-verify=true
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true apply -f jenkins/app-full.yaml"
+                            
+                            echo "Restarting deployments..."
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true rollout restart deployment/frontend"
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true rollout restart deployment/backend"
+                        }
+                    }
+                }
+    }
+    
+    post {
+        success {
+            echo "Déploiement terminé avec succès."
+        }
+        always {
+            // Sécurité : on supprime le kubeconfig temporaire
+            sh "rm -f ${KUBECONFIG_PATH}"
+        }
+    }
+}
