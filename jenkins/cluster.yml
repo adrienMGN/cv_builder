@@ -36,7 +36,7 @@
       args:
         executable: /bin/bash
 
-    - name: Installation des pré-requis (conntrack, socat)
+    - name: Installation des pré-requis (conntrack, socat, containerd)
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
         state: present
@@ -77,7 +77,7 @@
                   SystemdCgroup = true
 
     - name: Redémarrer Containerd
-      systemctl:
+      service: # Utilisation du bon module Ansible ici
         name: containerd
         state: restarted
         enabled: yes
@@ -89,6 +89,8 @@
         echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
         apt-get update && apt-get install -y kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
+      args:
+        executable: /bin/bash
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
