@@ -58,36 +58,63 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage des anciens dépôts K8s"
-      shell: "rm -f /etc/apt/sources.list.d/kubernetes.list /etc/apt/sources.list.d/archive_uri-https_pkgs_k8s_io_core_stable_v*.list"
+    - name: "Nettoyage radical des anciens dépôts"
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /etc/apt/sources.list.d/kubernetes.list
+        - /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+
+    - name: "Créer le dossier keyrings"
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
     - name: "Télécharger la clé GPG Kubernetes"
-      shell: |
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-      args:
-        executable: /bin/bash
+      get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key
+        dest: /tmp/k8s-release.key
+
+    - name: "Désarchiver la clé GPG"
+      shell: cat /tmp/k8s-release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
 
     - name: "Ajouter le dépôt Kubernetes v1.31"
       copy:
         dest: /etc/apt/sources.list.d/kubernetes.list
-        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
 
-    - name: "Installer Kubeadm, Kubelet et Kubectl v1.31 (FORCE)"
-      shell: !unsafe |
-        apt-mark unhold kubelet kubeadm kubectl || true
-        apt-get remove -y kubelet kubeadm kubectl kubelet-common kubeadm-common || true
-        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-        
-        # On force l'installation de la version disponible dans le dépôt v1.31
-        apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
-        
-        apt-mark hold kubelet kubeadm kubectl
-        
-        # Debug : on affiche la version pour les logs Jenkins
-        kubeadm version -o short
-      args:
-        executable: /bin/bash
+    - name: "Unhold des paquets existants"
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: install
+      with_items: [kubelet, kubeadm, kubectl]
+      ignore_errors: yes
+
+    - name: "Supprimer les anciennes versions de K8s"
+      apt:
+        name: [kubelet, kubeadm, kubectl, kubelet-common, kubeadm-common]
+        state: absent
+        purge: yes
+        force: yes
+
+    - name: "Installer Kubeadm, Kubelet et Kubectl (Version 1.31)"
+      apt:
+        name: [kubelet, kubeadm, kubectl]
+        state: present
+        update_cache: yes
+        allow_unauthenticated: yes
+      register: apt_install
+      until: apt_install is success
+      retries: 3
+      delay: 5
+
+    - name: "Hold des paquets K8s"
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      with_items: [kubelet, kubeadm, kubectl]
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -152,7 +179,6 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
-      # On force kubeadm à utiliser l'IP publique du master
       command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
