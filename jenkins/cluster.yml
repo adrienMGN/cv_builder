@@ -1,5 +1,5 @@
 ---
-- name: "Configuration Kubernetes Standalone - Harmonisation Totale"
+- name: "Configuration Kubernetes Standalone - Correction Finale"
   hosts: all
   become: yes
   tasks:
@@ -9,7 +9,7 @@
         sed -i '/127.0.1.1/d' /etc/hosts
         echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
 
-    - name: "Configuration Réseau Noyau"
+    - name: "Configuration Réseau Noyau (IP Forwarding)"
       shell: |
         modprobe overlay
         modprobe br_netfilter
@@ -32,15 +32,16 @@
         update_cache: yes
       ignore_errors: yes
 
-    - name: "Nettoyage et Configuration Containerd (SYSTEMD)"
+    - name: "CONFIGURATION CRUCIALE : Containerd"
+      # On utilise !unsafe pour protéger les caractères spéciaux du sed
       shell: !unsafe |
-        rm -f /etc/containerd/config.toml
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+        sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
         systemctl restart containerd
 
-    - name: "Installation des Binaires K8s"
+    - name: "Installation des CNI Plugins et Binaires"
       shell: |
         mkdir -p /opt/cni/bin
         curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
@@ -62,10 +63,10 @@
           [Install]
           WantedBy=multi-user.target
 
-    - name: "Configuration kubelet (Force Systemd Driver)"
+    - name: "Configuration kubelet (Flags)"
       shell: |
         mkdir -p /etc/systemd/system/kubelet.service.d
-        echo -e '[Service]\nEnvironment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"\nExecStart=\nExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock --cgroup-driver=systemd' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+        echo -e '[Service]\nEnvironment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"\nExecStart=\nExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
         systemctl daemon-reload
         systemctl enable --now kubelet
 
@@ -79,32 +80,8 @@
     - name: "Kubeadm Reset"
       command: /usr/bin/kubeadm reset -f
 
-    - name: "Créer le fichier de config Init"
-      copy:
-        dest: /tmp/kubeadm-config.yaml
-        content: |
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: InitConfiguration
-          localAPIEndpoint:
-            advertiseAddress: "{{ ansible_host }}"
-            bindPort: 6443
-          nodeRegistration:
-            name: "{{ inventory_hostname }}"
-            criSocket: unix:///var/run/containerd/containerd.sock
-            imagePullPolicy: IfNotPresent
-          ---
-          apiVersion: kubeadm.k8s.io/v1beta4
-          kind: ClusterConfiguration
-          kubernetesVersion: v1.31.0
-          networking:
-            podSubnet: 10.244.0.0/16
-          ---
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          kind: KubeletConfiguration
-          cgroupDriver: systemd
-
-    - name: "Initialiser le cluster (via config file)"
-      command: /usr/bin/kubeadm init --config /tmp/kubeadm-config.yaml --ignore-preflight-errors=all
+    - name: "Initialiser le cluster"
+      command: /usr/bin/kubeadm init --pod-network-cidr=10.244.0.0/16 --node-name {{ inventory_hostname }} --apiserver-advertise-address={{ ansible_host }} --kubernetes-version=v1.31.0
       register: kubeadm_init
 
     - name: "Configurer Kubeconfig"
