@@ -1,46 +1,43 @@
+---
 # ==============================================================================
 # PLAY 1 : Configuration Système K8s
 # ==============================================================================
-- name: Configuration Système K8s
+- name: "Configuration Système K8s"
   hosts: all
   become: yes
   tasks:
-    - name: Hostname et Correction /etc/hosts
+    - name: "Hostname et Correction /etc/hosts"
       shell: |
         hostnamectl set-hostname {{ inventory_hostname }}
         sed -i '/127.0.1.1/d' /etc/hosts
-        # On s'assure que le hostname pointe sur l'IP locale pour éviter les délais DNS
         echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
       args:
         executable: /bin/bash
 
-    - name: Désactiver le Swap
+    - name: "Désactiver le Swap"
       shell: |
         swapoff -a
         sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
       args:
         executable: /bin/bash
 
-    - name: Installation des pré-requis
+    - name: "Installation des pré-requis"
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
         state: present
         update_cache: yes
-      register: apt_res
-      until: apt_res is success
-      retries: 3
 
-    - name: Configurer les modules Kernel
+    - name: "Configurer les modules Kernel"
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Appliquer les modules Kernel
+    - name: "Appliquer les modules Kernel"
       shell: modprobe overlay && modprobe br_netfilter
 
-    - name: Configurer Sysctl
+    - name: "Configurer Sysctl"
       copy:
         dest: /etc/sysctl.d/k8s.conf
         content: |
@@ -48,10 +45,10 @@
           net.bridge.bridge-nf-call-ip6tables = 1
           net.ipv4.ip_forward                 = 1
 
-    - name: Appliquer Sysctl
+    - name: "Appliquer Sysctl"
       command: sysctl --system
 
-    - name: Configuration de Containerd
+    - name: "Configuration de Containerd"
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
@@ -60,12 +57,15 @@
       args:
         executable: /bin/bash
 
-    - name: Installation de Kubeadm, Kubelet et Kubectl
+    - name: "Installation de Kubeadm, Kubelet et Kubectl"
       shell: |
+        set -e
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
-        # On force l'update seulement sur ce repo pour éviter les erreurs de signature globales 2026
+        
+        # Utilisation de guillemets simples autour de la commande echo pour protéger les crochets [signed-by]
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+        
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
         apt-get install -y kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
@@ -75,12 +75,12 @@
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
 # ==============================================================================
-- name: Initialisation du Master
+- name: "Initialisation du Master"
   hosts: master
   become: yes
   tasks:
-    - name: Initialiser le cluster avec Kubeadm
-      # Correction : on force l'adresse IP de l'API Server pour qu'il réponde sur l'IP du VPS
+    - name: "Initialiser le cluster avec Kubeadm"
+      # On force l'API Server à écouter sur l'IP définie dans l'inventaire
       command: >
         kubeadm init 
         --pod-network-cidr=10.244.0.0/16 
@@ -89,43 +89,38 @@
       register: kubeadm_init
       failed_when: "'already exists' not in kubeadm_init.stderr and kubeadm_init.rc != 0"
 
-    - name: Configurer Kubeconfig (Root & User)
+    - name: "Configurer Kubeconfig"
       file:
-        path: "{{ item }}"
+        path: "/home/ubuntu/.kube"
         state: directory
         owner: ubuntu
         group: ubuntu
-      with_items:
-        - "/home/ubuntu/.kube"
 
-    - name: Copier admin.conf
+    - name: "Copier admin.conf"
       copy:
         src: /etc/kubernetes/admin.conf
-        dest: /home/ubuntu/.kube/config
+        dest: "/home/ubuntu/.kube/config"
         remote_src: yes
         owner: ubuntu
         group: ubuntu
 
-    - name: Attendre que l'API Server soit prêt
-      wait_for:
-        host: "{{ ansible_host }}"
-        port: 6443
-        delay: 10
-        timeout: 60
+    - name: "Attendre que le Control Plane soit stable"
+      pause:
+        seconds: 30
 
-    - name: Installer le plugin réseau Flannel
-      # Correction : on utilise directement la config admin pour être sûr des droits
-      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+    - name: "Installer le plugin réseau Flannel"
+      become_user: ubuntu
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_res
       until: flannel_res.rc == 0
       retries: 5
       delay: 10
 
-    - name: Générer la commande de join
+    - name: "Générer la commande de join"
       command: kubeadm token create --print-join-command
       register: join_cmd
 
-    - name: Partager la commande de join
+    - name: "Partager la commande de join"
       set_fact:
         join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
@@ -135,11 +130,11 @@
 # ==============================================================================
 # PLAY 3 : Jonction des Workers
 # ==============================================================================
-- name: Jonction des Workers
+- name: "Jonction des Workers"
   hosts: workers
   become: yes
   tasks:
-    - name: Rejoindre le cluster
+    - name: "Rejoindre le cluster"
       command: "{{ join_command }} --node-name {{ inventory_hostname }}"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
@@ -147,18 +142,18 @@
 # ==============================================================================
 # PLAY 4 : Validation
 # ==============================================================================
-- name: Validation du Cluster
+- name: "Validation du Cluster"
   hosts: master
   become: yes
   tasks:
-    - name: Attendre que les nœuds soient Ready
+    - name: "Attendre que les nœuds soient Ready"
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
       register: ready_count
       until: ready_count.stdout|int >= (groups['all'] | length)
       retries: 20
       delay: 15
 
-    - name: Afficher l'état final
+    - name: "Afficher l'état final"
       command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
       register: final_res
     - debug:
