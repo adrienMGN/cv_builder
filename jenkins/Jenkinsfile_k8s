@@ -38,6 +38,23 @@ pipeline {
             }
         }
 
+        stage('Configure Registry Trust') {
+            steps {
+                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                    sh """
+                        echo "Configuration du registre privé sur tous les nœuds..."
+                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
+                            mkdir -p /etc/rancher/k3s && \
+                            echo 'mirrors:
+          \"100.77.150.49:5000\":
+            endpoint:
+              - \"http://100.77.150.49:5000\"' > /etc/rancher/k3s/registries.yaml
+                        "
+                    """
+                }
+            }
+        }
+
         stage('Install K3s Master') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
