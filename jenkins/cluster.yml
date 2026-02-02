@@ -73,16 +73,12 @@
         content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
 
     - name: "Installer Kubeadm, Kubelet et Kubectl (Alignement v1.31)"
-      shell: |
-        # On nettoie d'abord les éventuelles vieilles versions qui bloquent
+      # On utilise !unsafe pour qu'Ansible ne touche pas au contenu
+      shell: !unsafe |
         apt-mark unhold kubelet kubeadm kubectl || true
         apt-get remove -y kubelet kubeadm kubectl || true
-        
-        # Update et installation forcée en v1.31
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
-        
-        # On verrouille la version 1.31
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
@@ -150,7 +146,6 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
-      # On ajoute --ignore-preflight-errors pour bypasser les petits soucis de version si nécessaire
       command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
