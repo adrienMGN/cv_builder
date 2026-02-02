@@ -1,34 +1,42 @@
 pipeline {
     agent any
 
+    environment {
+        KUBESPRAY_DIR = "${WORKSPACE}/kubespray"
+    }
+
     stages {
         stage('Checkout Code') {
             steps {
-                // Récupère vos playbooks et fichiers d'inventaire depuis Git
                 checkout scm
+                // On clone Kubespray directement dans le workspace
+                sh "rm -rf ${KUBESPRAY_DIR}"
+                sh "git clone --depth 1 --branch v2.24.0 https://github.com/kubernetes-sigs/kubespray.git ${KUBESPRAY_DIR}"
             }
         }
 
-        stage('Install Ansible Dependencies') {
+        stage('Install Kubespray Dependencies') {
             steps {
-                sh '''
-                    # Optionnel : Installation des dépendances si vous utilisez Kubespray
-                # ansible-galaxy collection install -r requirements.yml
-                echo "Pas de dépendances à installer pour l'instant"
-                '''
+                sh """
+                    # Installation des dépendances Python (nécessaire pour les modules k8s d'Ansible)
+                    pip install -r ${KUBESPRAY_DIR}/requirements.txt
+                """
             }
         }
 
         stage('Provision Kubernetes Cluster') {
             steps {
-                // Jenkins charge les deux clés dans l'agent SSH en mémoire
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     ansiblePlaybook(
-                        playbook: "${WORKSPACE}/jenkins/cluster.yml",
+                        // On utilise le playbook OFFICIEL de Kubespray
+                        playbook: "${KUBESPRAY_DIR}/cluster.yml",
                         inventory: "${WORKSPACE}/jenkins/hosts.ini",
-                        // IMPORTANT : On ne met pas de credentialsId ici car ils sont dans l'agent
                         extraVars: [
-                            ansible_become: true
+                            ansible_become: true,
+                            // On force l'usage de Docker ou Containerd (Containerd est recommandé)
+                            container_manager: 'containerd',
+                            // On peut choisir le plugin réseau (calico, flannel, etc.)
+                            kube_network_plugin: 'calico'
                         ],
                         installation: 'ansible-default',
                         colorized: true
