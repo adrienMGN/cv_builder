@@ -56,8 +56,8 @@ spec:
         - name: NODE_ENV
           value: "production"
         - name: ALLOWED_ORIGINS
-          value: "http://152.228.130.229:30000"
-        # Utilisation du Secret pour la clé API
+          # Assure-toi que cette IP est celle utilisée pour accéder au site
+          value: "http://100.120.92.90:30000"
         - name: RESEND_API_KEY
           valueFrom:
             secretKeyRef:
@@ -69,7 +69,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  # NOM CHANGÉ de backend-service à backend pour le DNS Nginx
   name: backend
 spec:
   type: NodePort
@@ -87,7 +86,8 @@ kind: Deployment
 metadata:
   name: frontend
 spec:
-  replicas: 1
+  # PASSAGE À 2 RÉPLICAS
+  replicas: 2
   selector:
     matchLabels:
       app: frontend
