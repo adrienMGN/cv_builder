@@ -48,17 +48,18 @@ pipeline {
         }
 
         stage('Kubernetes Deploy') {
-            steps {
-                script {
-                    // Application des manifestes
-                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} apply -f jenkins/app-full.yaml"
-                    
-                    // On attend que le déploiement soit prêt ou on force le refresh
-                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} rollout restart deployment/frontend"
-                    sh "kubectl --kubeconfig=${KUBECONFIG_PATH} rollout restart deployment/backend"
+                    steps {
+                        script {
+                            echo "Applying K8s manifests..."
+                            // Ajout du flag --insecure-skip-tls-verify=true
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true apply -f k8s/app-full.yaml"
+                            
+                            echo "Restarting deployments..."
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true rollout restart deployment/frontend"
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true rollout restart deployment/backend"
+                        }
+                    }
                 }
-            }
-        }
     }
     
     post {
