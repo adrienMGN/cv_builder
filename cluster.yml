@@ -80,14 +80,12 @@
       args:
         executable: /bin/bash
 
-    - name: Attendre l'API Server
-      wait_for:
-        port: 6443
-        delay: 5
-        timeout: 60
+    - name: Pause de sécurité pour l'API Server (30s)
+      pause:
+        seconds: 30
 
-    - name: Installer Flannel (Bypass TLS cache)
-      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+    - name: Installer Flannel (Bypass validation OpenAPI)
+      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml --validate=false"
 
 # ==============================================================================
 # PLAY 4 : Join des Workers
