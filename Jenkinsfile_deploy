@@ -1,0 +1,54 @@
+pipeline {
+    agent any
+    
+    environment {
+        REGISTRY = "152.228.130.229:5000"
+        VITE_API_URL = "http://152.228.130.229:30001"
+    }
+
+    stages {
+        stage('Build & Push Backend') {
+            steps {
+                script {
+                    echo "Building Backend..."
+                    dir('backend') {
+                        sh "docker build -t ${REGISTRY}/cv-backend:latest ."
+                        sh "docker push ${REGISTRY}/cv-backend:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Build & Push Frontend') {
+            steps {
+                script {
+                    echo "Building Frontend..."
+                    // On passe l'URL de l'API au build Vite
+                    sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
+                    sh "docker push ${REGISTRY}/cv-frontend:latest"
+                }
+            }
+        }
+
+        stage('Kubernetes Deploy') {
+            steps {
+                script {
+                    echo "Applying K8s manifests..."
+                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f k8s/app-full.yaml"
+                    
+                    // Force le redémarrage pour charger les nouvelles images
+                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/frontend"
+                    sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/backend"
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Application en ligne !"
+            echo "Frontend : http://152.228.130.229:30000"
+            echo "API : http://152.228.130.229:30001"
+        }
+    }
+}
