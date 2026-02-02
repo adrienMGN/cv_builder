@@ -1,5 +1,5 @@
 ---
-- name: "Configuration Kubernetes Standalone - Harmonisation Containerd"
+- name: "Configuration Kubernetes Standalone - Harmonisation Totale"
   hosts: all
   become: yes
   tasks:
@@ -9,7 +9,7 @@
         sed -i '/127.0.1.1/d' /etc/hosts
         echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
 
-    - name: "Configuration Réseau Noyau (IP Forwarding)"
+    - name: "Configuration Réseau Noyau"
       shell: |
         modprobe overlay
         modprobe br_netfilter
@@ -33,18 +33,16 @@
       ignore_errors: yes
 
     - name: "CONFIGURATION CRUCIALE : Containerd"
-      # On utilise !unsafe pour protéger les caractères spéciaux
+      # !unsafe empêche Ansible d'interpréter les caractères spéciaux comme du code
       shell: !unsafe |
         rm -f /etc/containerd/config.toml
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
-        # On active SystemdCgroup (requis par K8s)
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        # On définit l'image de sandbox correcte
         sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
         systemctl restart containerd
 
-    - name: "Installation des Binaires K8s v1.31.0"
+    - name: "Installation des Binaires K8s"
       shell: |
         mkdir -p /opt/cni/bin
         curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
