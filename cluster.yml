@@ -107,32 +107,28 @@
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-    # --- CONFIGURATION PRUDENTE DE CONTAINERD (COHABITATION DOCKER/JENKINS) ---
+# --- CONFIGURATION PRUDENTE DE CONTAINERD (COHABITATION DOCKER/JENKINS) ---
     - name: S'assurer que le dossier de config containerd existe
       file:
         path: /etc/containerd
         state: directory
         mode: '0755'
 
-    - name: Initialiser config.toml SEULEMENT s'il est vide (Protège Docker)
-      # Au lieu d'écraser le fichier, on ne l'initialise que s'il n'existe pas.
-      # Cela évite de déconnecter Jenkins de son moteur Docker.
+    - name: Réinitialiser la config containerd pour activer le support CRI
+      # Docker désactive parfois le support CRI par défaut. 
+      # On le réactive sans supprimer le fichier pour ne pas casser Jenkins.
       shell: |
-        if [ ! -s /etc/containerd/config.toml ]; then
-          containerd config default > /etc/containerd/config.toml
-        fi
-      changed_when: false
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/disabled_plugins = \[.*/disabled_plugins = \[\]/g' /etc/containerd/config.toml
+      changed_when: true
 
     - name: Activer SystemdCgroup (Indispensable pour Kubernetes)
-      # On utilise 'replace' pour ne modifier QUE cette ligne sans toucher au reste
       replace:
         path: /etc/containerd/config.toml
         regexp: 'SystemdCgroup = false'
         replace: 'SystemdCgroup = true'
-      notify: Restart containerd
 
-  handlers:
-    - name: Restart containerd
+    - name: Redémarrer Containerd pour appliquer les changements CRI
       service:
         name: containerd
         state: restarted
