@@ -11,13 +11,11 @@
         kubeadm reset -f || true
         systemctl stop kubelet || true
         systemctl stop containerd || true
-        ip link delete cni0 || true
-        ip link delete flannel.1 || true
-        rm -rf /etc/cni/net.d /var/lib/cni/ /var/lib/kubelet/* /var/lib/etcd /etc/kubernetes/* /home/ubuntu/.kube
+        rm -rf /etc/cni/net.d /var/lib/kubelet/* /etc/kubernetes/*
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration Système & Installation
+# PLAY 1 : Configuration Système
 # ==============================================================================
 - name: Configuration Système
   hosts: all
@@ -38,37 +36,23 @@
       args:
         executable: /bin/bash
 
-    - name: Installation des pré-requis système
+    - name: Installation des pré-requis (conntrack, socat)
       apt:
-        name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat]
+        name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
         state: present
         update_cache: yes
 
-    - name: Ajouter la clé et le dépôt Kubernetes (v1.31)
-      shell: |
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
-        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
-      args:
-        creates: /etc/apt/sources.list.d/kubernetes.list
-
-    - name: Installer Kubernetes Tools
-      apt:
-        name: [kubelet, kubeadm, kubectl]
-        state: present
-        update_cache: yes
-
-    - name: Charger les modules Kernel
+    - name: Configurer les modules Kernel
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Appliquer les modules Kernel
+    - name: Appliquer modules Kernel
       shell: modprobe overlay && modprobe br_netfilter
 
-    - name: Configurer le Sysctl pour le réseau K8s
+    - name: Configurer Sysctl
       copy:
         dest: /etc/sysctl.d/k8s.conf
         content: |
@@ -76,19 +60,35 @@
           net.bridge.bridge-nf-call-ip6tables = 1
           net.ipv4.ip_forward                 = 1
 
-    - name: Recharger le Sysctl
+    - name: Appliquer Sysctl
       command: sysctl --system
 
-    - name: Configurer Containerd (SystemdCgroup & Sandbox Image)
+    - name: Configurer Containerd (Minimal & Systemd)
+      copy:
+        dest: /etc/containerd/config.toml
+        content: |
+          version = 2
+          [plugins]
+            [plugins."io.containerd.grpc.v1.cri"]
+              sandbox_image = "registry.k8s.io/pause:3.10"
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                  SystemdCgroup = true
+
+    - name: Redémarrer Containerd
+      systemctl:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    - name: Ajouter dépôt K8s et installer tools
       shell: |
-        mkdir -p /etc/containerd
-        containerd config default > /etc/containerd/config.toml
-        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.k8s.io/pause:3.10"|g' /etc/containerd/config.toml
-        systemctl restart containerd
-        systemctl enable --now kubelet
-      args:
-        executable: /bin/bash
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+        apt-get update && apt-get install -y kubelet kubeadm kubectl
+        apt-mark hold kubelet kubeadm kubectl
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -100,16 +100,15 @@
     - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU,Swap --node-name {{ inventory_hostname }}
       register: kubeadm_init
-      failed_when: "'already exists' not in kubeadm_init.stderr and kubeadm_init.rc != 0"
 
-    - name: Configurer kubectl pour ubuntu
+    - name: Setup kubeconfig ubuntu
       file:
         path: /home/ubuntu/.kube
         state: directory
         owner: ubuntu
         group: ubuntu
 
-    - name: Copier admin.conf
+    - name: Copy admin.conf
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /home/ubuntu/.kube/config
@@ -121,28 +120,28 @@
       become_user: ubuntu
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
-    - name: Générer commande join
+    - name: Token Join
       command: kubeadm token create --print-join-command
-      register: join_command_raw
+      register: join_cmd
 
-    - name: Diffuser la commande de join
+    - name: Share Token
       set_fact:
-        join_command: "{{ join_command_raw.stdout }}"
+        join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
       with_items: "{{ groups['all'] }}"
 
 # ==============================================================================
-# PLAY 3 : Jonction des Workers
+# PLAY 3 : Jonction Workers
 # ==============================================================================
 - name: Jonction Workers
   hosts: workers
   become: yes
   tasks:
-    - name: Rejoindre le cluster
+    - name: Join
       command: "{{ join_command }} --node-name {{ inventory_hostname }}"
-      register: worker_join
-      failed_when: "'already exists' not in worker_join.stderr and worker_join.rc != 0"
+      register: joined
+      failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
 
 # ==============================================================================
 # PLAY 4 : Validation
@@ -151,16 +150,15 @@
   hosts: master
   become: yes
   tasks:
-    - name: Attendre les noeuds Ready
+    - name: Wait for nodes
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
-      register: nodes_ready
-      until: nodes_ready.stdout|int >= 2
-      retries: 15
+      register: ready_count
+      until: ready_count.stdout|int >= 2
+      retries: 20
       delay: 10
-      changed_when: false
 
-    - name: Statut final
+    - name: Final status
       command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
-      register: res
+      register: final_res
     - debug:
-        msg: "{{ res.stdout_lines }}"
+        msg: "{{ final_res.stdout_lines }}"
