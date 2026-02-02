@@ -13,7 +13,7 @@
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 & 2 : Hostnames et Composants (Inchangés car ils fonctionnent)
+# PLAY 1 : Configuration Système (Simplifiée)
 # ==============================================================================
 - name: Configuration Système
   hosts: all
@@ -32,14 +32,13 @@
         systemctl enable --now kubelet
 
 # ==============================================================================
-# PLAY 3 : Initialisation avec Token Statique (Évite le Timeout)
+# PLAY 3 : Initialisation du Master (Version Têtue)
 # ==============================================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
     - name: Kubeadm Init avec Token Fixe
-      # On impose un token simple pour éviter que kubeadm ne patine
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --token abcdef.1234567890abcdef --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
 
     - name: Configurer Kubeconfig
@@ -48,8 +47,13 @@
         cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown -R ubuntu:ubuntu /home/ubuntu/.kube
 
-    - name: Installer Flannel
+    - name: Installer Flannel (BOUCLE DE FORCE)
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+      register: flannel_res
+      until: flannel_res.rc == 0
+      retries: 15
+      delay: 15
+      # On va essayer pendant 4 minutes si l'API fait des siennes
 
 # ==============================================================================
 # PLAY 4 : Join des Workers (Utilise le Token Fixe)
@@ -57,19 +61,17 @@
 - name: Jonction Workers
   hosts: workers
   become: yes
-  vars:
-    # On définit les variables ici directement
-    master_ip: "152.228.130.229"
-    token: "abcdef.1234567890abcdef"
-    # Le hash se récupère une seule fois (il ne change pas si on ne change pas la CA)
-    ca_hash: "sha256:f8a5a2351230768b294e689e9bb4e98176b96c4813dd548ec327692980d0c650"
   tasks:
-    - name: Attendre 30s que le Master se pose
+    - name: Pause pour laisser le Master respirer
       pause:
         seconds: 30
 
     - name: Rejoindre le cluster
-      command: "kubeadm join {{ master_ip }}:6443 --token {{ token }} --discovery-token-ca-cert-hash {{ ca_hash }} --node-name {{ inventory_hostname }}"
+      command: "kubeadm join 152.228.130.229:6443 --token abcdef.1234567890abcdef --discovery-token-ca-cert-hash sha256:f8a5a2351230768b294e689e9bb4e98176b96c4813dd548ec327692980d0c650 --node-name {{ inventory_hostname }}"
+      register: join_res
+      until: join_res.rc == 0
+      retries: 5
+      delay: 20
 
 # ==============================================================================
 # PLAY 5 : Validation
