@@ -16,7 +16,7 @@
         rm -rf /var/lib/kubelet/*
         rm -rf /var/lib/etcd
         rm -rf /etc/kubernetes/*
-        rm -rf $HOME/.kube
+        rm -rf /home/ubuntu/.kube
       failed_when: false
 
 # ==============================================================================
@@ -70,15 +70,15 @@
     - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
 
-      - name: Rafraîchir Kubeconfig (Correctif TLS)
-            shell: |
-              rm -rf /home/ubuntu/.kube
-              mkdir -p /home/ubuntu/.kube
-              cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
-              chown -R ubuntu:ubuntu /home/ubuntu/.kube
-              rm -rf /home/ubuntu/.kube/cache
-            args:
-              executable: /bin/bash
+    - name: Rafraîchir Kubeconfig (Correctif TLS)
+      shell: |
+        rm -rf /home/ubuntu/.kube
+        mkdir -p /home/ubuntu/.kube
+        cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+        chown -R ubuntu:ubuntu /home/ubuntu/.kube
+        rm -rf /home/ubuntu/.kube/cache
+      args:
+        executable: /bin/bash
 
     - name: Attendre l'API Server
       wait_for:
@@ -87,7 +87,6 @@
         timeout: 60
 
     - name: Installer Flannel (Bypass TLS cache)
-      # On utilise directement le fichier admin.conf pour être 100% sûr des certificats
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
 
 # ==============================================================================
