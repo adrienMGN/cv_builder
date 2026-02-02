@@ -1,53 +1,56 @@
 ---
-# PREMIER PLAY : Nettoyage et préparation de l'environnement Python
+# ==============================================================================
+# PLAY 1 : Préparation de l'environnement (Bootstrap)
+# ==============================================================================
 - name: Bootstrap - Installation de Python et Nettoyage APT
   hosts: all
-  gather_facts: no
+  gather_facts: no  # Désactivé car Python n'est pas encore garanti sur la cible
   become: yes
   tasks:
-    - name: Nettoyage forcé des résidus de dépôts en échec
-      # On supprime tout ce qui a pu être partiellement configuré lors des échecs précédents
+    - name: Nettoyage ciblé des dépôts K8s (Éviter de casser Docker/Jenkins)
+      # On nettoie UNIQUEMENT ce qui concerne Kubernetes pour ne pas supprimer 
+      # les sources de Docker nécessaires au fonctionnement de Jenkins.
       raw: >
         sed -i '/kubernetes/d' /etc/apt/sources.list &&
         rm -rf /etc/apt/sources.list.d/kubernetes.list &&
         rm -rf /etc/apt/keyrings/kubernetes-apt-keyring* &&
-        rm -rf /var/lib/apt/lists/* &&
         apt-get update &&
         apt-get install -y python3
       changed_when: false
 
-# DEUXIÈME PLAY : Configuration système et installation K8s
+# ==============================================================================
+# PLAY 2 : Installation des composants Kubernetes
+# ==============================================================================
 - name: Préparation et installation des composants Kubernetes
   hosts: all
   become: yes
   tasks:
-    # --- GESTION DU SWAP ---
-    - name: Désactiver le swap immédiatement
+    # --- CONFIGURATION SYSTÈME (PRÉ-REQUIS) ---
+    - name: Désactiver le swap (Requis par Kubelet)
       command: swapoff -a
       when: ansible_facts['swaptotal_mb'] > 0
       changed_when: true
 
-    - name: Commenter le swap dans fstab (persistance au reboot)
+    - name: Commenter le swap dans fstab pour la persistance
       replace:
         path: /etc/fstab
         regexp: '^([^#].*?\sswap\s+.*)$'
         replace: '# \1'
 
-    # --- RÉSEAU ET NOYAU ---
-    - name: Configurer modules noyau pour K8s
+    - name: Configurer le chargement des modules noyau (overlay & br_netfilter)
       copy:
         dest: /etc/modules-load.d/k8s.conf
         content: |
           overlay
           br_netfilter
 
-    - name: Charger les modules
+    - name: Charger les modules noyau immédiatement
       modprobe:
         name: "{{ item }}"
         state: present
       loop: [overlay, br_netfilter]
 
-    - name: Paramétrage Sysctl pour le réseau
+    - name: Configurer Sysctl pour le réseau (IP Forwarding)
       sysctl:
         name: "{{ item.key }}"
         value: "{{ item.value }}"
@@ -59,59 +62,69 @@
         - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { key: 'net.ipv4.ip_forward', value: '1' }
 
-    # --- GESTION DES DÉPÔTS ET CLÉS (CORRECTIF 2026) ---
-    - name: Dépendances APT
+    # --- GESTION DU DÉPÔT K8S (CORRECTIF SIGNATURE 2026) ---
+    - name: Installer les outils APT de base
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg]
         state: present
         update_cache: yes
 
-    - name: Re-créer le répertoire keyrings
+    - name: Créer le répertoire pour les clés APT
       file:
         path: /etc/apt/keyrings
         state: directory
         mode: '0755'
 
-    - name: Télécharger la clé K8s (Format ASCII)
+    - name: Télécharger la clé publique Kubernetes
       get_url:
         url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
         dest: /tmp/kubernetes-release.key
         mode: '0644'
 
-    - name: Convertir la clé en binaire GPG
-      # Nécessaire pour éviter les erreurs de format PGP v3 sur les OS récents
+    - name: Convertir la clé en format GPG binaire (Correctif PGP v3)
+      # Force la conversion pour éviter le rejet des signatures Packet v3
       shell: gpg --dearmor < /tmp/kubernetes-release.key > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
       args:
         creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-    - name: Ajouter dépôt K8s avec exception de confiance
-      # trusted=yes est ajouté pour ignorer le rejet de la signature globale v3 du dépôt distant
+    - name: Ajouter le dépôt K8s (avec trusted=yes pour 2026)
       apt_repository:
         repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
         state: present
         filename: kubernetes
 
-    # --- INSTALLATION DES PAQUETS ---
-    - name: Installer K8s et Containerd
+    # --- INSTALLATION DES LOGICIELS ---
+    - name: Installer Kubelet, Kubeadm, Kubectl et Containerd
       apt:
+        # Si Docker est installé, containerd est déjà présent. Apt fera une mise à jour.
         name: [kubelet, kubeadm, kubectl, containerd]
         state: present
         update_cache: yes
 
-    - name: Hold des paquets pour éviter les MAJ automatiques
+    - name: Verrouiller les versions des paquets K8s (Hold)
       dpkg_selections:
         name: "{{ item }}"
         selection: hold
       loop: [kubelet, kubeadm, kubectl]
 
-    # --- CONFIGURATION CONTAINERD ---
-    - name: Initialiser config Containerd
-      shell: |
-        mkdir -p /etc/containerd
-        containerd config default > /etc/containerd/config.toml
-      changed_when: true
+    # --- CONFIGURATION PRUDENTE DE CONTAINERD (COHABITATION DOCKER/JENKINS) ---
+    - name: S'assurer que le dossier de config containerd existe
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
 
-    - name: Activer SystemdCgroup dans Containerd (requis par K8s)
+    - name: Initialiser config.toml SEULEMENT s'il est vide (Protège Docker)
+      # Au lieu d'écraser le fichier, on ne l'initialise que s'il n'existe pas.
+      # Cela évite de déconnecter Jenkins de son moteur Docker.
+      shell: |
+        if [ ! -s /etc/containerd/config.toml ]; then
+          containerd config default > /etc/containerd/config.toml
+        fi
+      changed_when: false
+
+    - name: Activer SystemdCgroup (Indispensable pour Kubernetes)
+      # On utilise 'replace' pour ne modifier QUE cette ligne sans toucher au reste
       replace:
         path: /etc/containerd/config.toml
         regexp: 'SystemdCgroup = false'
@@ -123,41 +136,45 @@
       service:
         name: containerd
         state: restarted
-        enabled: yes
 
-# TROISIÈME PLAY : Initialisation du Master
+# ==============================================================================
+# PLAY 3 : Initialisation du Master
+# ==============================================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Kubeadm Init
-      command: kubeadm init --pod-network-cidr=10.244.0.0/16
+    - name: Lancer Kubeadm Init
+      # On ignore les erreurs de CPU si ton Master/Jenkins est sur une petite VM
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU
       args:
         creates: /etc/kubernetes/admin.conf
 
-    - name: Dossier .kube pour root
+    - name: Créer le dossier .kube pour l'utilisateur root
       file:
         path: /root/.kube
         state: directory
         mode: '0755'
 
-    - name: Config kubectl root
+    - name: Copier le fichier admin.conf pour kubectl
       copy:
         src: /etc/kubernetes/admin.conf
         dest: /root/.kube/config
         remote_src: yes
 
-    - name: Plugin Réseau Flannel
+    - name: Installer le plugin réseau Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_out
       changed_when: "'created' in flannel_out.stdout"
 
-# QUATRIÈME PLAY : Vérification du statut
+# ==============================================================================
+# PLAY 4 : Vérification finale
+# ==============================================================================
 - name: Verification
   hosts: master
   become: yes
   tasks:
-    - name: Attente Master Ready
+    - name: Attendre que le Master soit Ready
       shell: kubectl get nodes | grep "Ready"
       register: result
       until: result.rc == 0
@@ -165,7 +182,7 @@
       delay: 10
       changed_when: false
 
-    - name: Afficher le statut final
+    - name: Afficher le statut final du cluster
       shell: kubectl get nodes
       register: final_status
 
