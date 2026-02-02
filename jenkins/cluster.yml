@@ -31,15 +31,18 @@
         state: present
         update_cache: yes
 
-    - name: "CONFIGURATION CRUCIALE : Containerd & Sandbox"
+    - name: "Création du dossier de configuration Containerd"
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: "CONFIGURATION CRUCIALE : Containerd (Cgroup + Sandbox)"
       shell: |
-        mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
-        # Activation du Cgroup Systemd
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        # Correction de l'image sandbox (pause)
         sed -i 's|sandbox_image = .*|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
-        systemctl restart containerd
+      notify: Restart Containerd
 
     - name: "Configuration de crictl"
       copy:
@@ -84,6 +87,12 @@
         echo -e '[Service]\nExecStart=\nExecStart=/usr/bin/kubelet --config=/var/lib/kubelet/config.yaml --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
         systemctl daemon-reload
         systemctl enable --now kubelet
+
+  handlers:
+    - name: Restart Containerd
+      systemd:
+        name: containerd
+        state: restarted
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
