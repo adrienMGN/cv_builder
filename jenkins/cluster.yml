@@ -1,4 +1,3 @@
----
 # ==============================================================================
 # PLAY 1 : Configuration Système K8s
 # ==============================================================================
@@ -10,6 +9,7 @@
       shell: |
         hostnamectl set-hostname {{ inventory_hostname }}
         sed -i '/127.0.1.1/d' /etc/hosts
+        # On s'assure que le hostname pointe sur l'IP locale pour éviter les délais DNS
         echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
       args:
         executable: /bin/bash
@@ -26,6 +26,9 @@
         name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
         state: present
         update_cache: yes
+      register: apt_res
+      until: apt_res is success
+      retries: 3
 
     - name: Configurer les modules Kernel
       copy:
@@ -57,13 +60,13 @@
       args:
         executable: /bin/bash
 
-    - name: Installation de Kubeadm, Kubelet et Kubectl (Fix Signature 2026)
+    - name: Installation de Kubeadm, Kubelet et Kubectl
       shell: |
         mkdir -p /etc/apt/keyrings
-        # On utilise --dearmor de manière plus stricte pour les nouvelles politiques de sécurité
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
         echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
-        apt-get update
+        # On force l'update seulement sur ce repo pour éviter les erreurs de signature globales 2026
+        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
         apt-get install -y kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
       args:
@@ -77,16 +80,23 @@
   become: yes
   tasks:
     - name: Initialiser le cluster avec Kubeadm
-      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --node-name {{ inventory_hostname }}
+      # Correction : on force l'adresse IP de l'API Server pour qu'il réponde sur l'IP du VPS
+      command: >
+        kubeadm init 
+        --pod-network-cidr=10.244.0.0/16 
+        --node-name {{ inventory_hostname }}
+        --apiserver-advertise-address={{ ansible_host }}
       register: kubeadm_init
       failed_when: "'already exists' not in kubeadm_init.stderr and kubeadm_init.rc != 0"
 
-    - name: Configurer Kubeconfig
+    - name: Configurer Kubeconfig (Root & User)
       file:
-        path: /home/ubuntu/.kube
+        path: "{{ item }}"
         state: directory
         owner: ubuntu
         group: ubuntu
+      with_items:
+        - "/home/ubuntu/.kube"
 
     - name: Copier admin.conf
       copy:
@@ -96,13 +106,16 @@
         owner: ubuntu
         group: ubuntu
 
-    - name: Attendre que le Control Plane soit stable
-      pause:
-        seconds: 30
+    - name: Attendre que l'API Server soit prêt
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 6443
+        delay: 10
+        timeout: 60
 
     - name: Installer le plugin réseau Flannel
-      become_user: ubuntu
-      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      # Correction : on utilise directement la config admin pour être sûr des droits
+      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       register: flannel_res
       until: flannel_res.rc == 0
       retries: 5
@@ -111,9 +124,6 @@
     - name: Générer la commande de join
       command: kubeadm token create --print-join-command
       register: join_cmd
-      until: join_cmd.rc == 0
-      retries: 5
-      delay: 10
 
     - name: Partager la commande de join
       set_fact:
