@@ -27,7 +27,7 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Nettoyage des résidus sur Master et Worker 03..."
+                        echo "Nettoyage des résidus..."
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
                             if [ -f /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh; fi;
                             if [ -f /usr/local/bin/k3s-agent-uninstall.sh ]; then /usr/local/bin/k3s-agent-uninstall.sh; fi;
@@ -51,30 +51,24 @@ pipeline {
             }
         }
 
-        stage('Install K3s Worker 03') {
+        stage('Install K3s Workers') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     script {
-                        // Récupération du token
-                        def rawOutput = sh(
+                        // On récupère le token brute
+                        String rawOutput = sh(
                             script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a 'cat /var/lib/rancher/k3s/server/node-token'",
                             returnStdout: true
                         ).trim()
                         
-                        // Nettoyage précis : on cherche la chaîne qui commence par K10
-                        def matcher = (rawOutput =~ /K10[a-f0-9:]+::server:[a-f0-9]+/)
-                        if (!matcher) {
-                            error "Token K3s introuvable dans la sortie Ansible."
-                        }
-                        def k3sToken = matcher[0]
+                        // Extraction sécurisée sans utiliser d'objets non-sérialisables (Matcher) dans le scope principal
+                        String k3sToken = extractToken(rawOutput)
 
-                        echo "Token valide extrait : \${k3sToken.substring(0, 15)}..."
+                        echo "Token extrait : ${k3sToken.substring(0, 10)}..."
 
-                        // Installation sur le worker-node-03
-                        // On utilise le groupe 'kube_node' de ton hosts.ini
                         sh """
                             ${VENV_PATH}/bin/ansible kube_node -i jenkins/hosts.ini -b -m shell -a "
-                                curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name worker-node-03
+                                curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name {{ inventory_hostname }}
                             "
                         """
                     }
@@ -86,7 +80,6 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Etat du cluster :"
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "kubectl get nodes"
                     """
                 }
@@ -99,4 +92,14 @@ pipeline {
             cleanWs()
         }
     }
+}
+
+// Fonction décorée pour éviter le bug de sérialisation
+@NonCPS
+def extractToken(String text) {
+    def matcher = (text =~ /K10[a-f0-9:]+::server:[a-f0-9]+/)
+    if (matcher) {
+        return matcher[0]
+    }
+    return null
 }
