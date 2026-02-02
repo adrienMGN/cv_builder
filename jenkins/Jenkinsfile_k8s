@@ -58,29 +58,33 @@ pipeline {
                     steps {
                         sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                             script {
-                                // On récupère le TOKEN de manière plus robuste
-                                def tokenCmd = "sudo cat /var/lib/rancher/k3s/server/node-token"
+                                // 1. Récupération propre du token sur le master
+                                // On utilise -o BatchMode=yes pour éviter les blocages SSH
                                 def rawToken = sh(
-                                    script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a '${tokenCmd}'",
+                                    script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -a 'cat /var/lib/rancher/k3s/server/node-token'",
                                     returnStdout: true
                                 ).trim()
                                 
-                                // On extrait uniquement la chaîne qui commence par K10
-                                def k3sToken = (rawToken =~ /K10[a-f0-9:]+/)[0]
+                                // On cherche la ligne qui contient le token (format K10...)
+                                def k3sToken = rawToken.readLines().find { it.contains("K10") }?.split()?.last()?.trim()
         
-                                echo "Token nettoyé : ${k3sToken}"
+                                if (!k3sToken) {
+                                    error "ERREUR : Impossible de lire le token sur le master. Vérifie que le master est bien lancé."
+                                }
         
-                                // Installation des workers en forçant l'IP publique du master
+                                echo "Token récupéré : ${k3sToken}"
+        
+                                // 2. Installation sur les workers avec journalisation
+                                // On ajoute --node-ip pour forcer l'usage de l'IP Tailscale
                                 sh """
                                     ${VENV_PATH}/bin/ansible workers -i jenkins/hosts.ini -b -m shell -a "
-                                        curl -sfL https://get.k3s.io | K3S_URL=https://100.120.92.90:6443 K3S_TOKEN=${k3sToken} sh -s - --node-name {{ inventory_hostname }}
+                                        curl -sfL https://get.k3s.io | K3S_URL=https://100.120.92.90:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name {{ inventory_hostname }}
                                     "
                                 """
                             }
                         }
                     }
                 }
-    
         stage('Verify Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
