@@ -2,90 +2,86 @@ pipeline {
     agent any
 
     environment {
-        KUBESPRAY_DIR = "${WORKSPACE}/kubespray"
-        VENV_PATH     = "${WORKSPACE}/venv_kubespray"
+        VENV_PATH = "${WORKSPACE}/venv_ansible"
+        MASTER_IP = "100.120.92.90" // Ton IP Master
     }
 
     stages {
         stage('Checkout Code') {
             steps {
-                // Récupère ton code (hosts.ini, etc.)
                 checkout scm
-                
-                // Clone la version master de Kubespray pour compatibilité Python 3.13
-                sh "rm -rf ${KUBESPRAY_DIR}"
-                sh "git clone --depth 1 https://github.com/kubernetes-sigs/kubespray.git ${KUBESPRAY_DIR}"
             }
         }
 
-        stage('Install Kubespray Dependencies') {
+        stage('Setup Ansible') {
             steps {
                 sh """
                     python3 -m venv ${VENV_PATH}
-                    ${VENV_PATH}/bin/pip install --upgrade pip setuptools wheel
-                    ${VENV_PATH}/bin/pip install -r ${KUBESPRAY_DIR}/requirements.txt
+                    ${VENV_PATH}/bin/pip install --upgrade pip
+                    ${VENV_PATH}/bin/pip install ansible jmespath
                 """
             }
         }
 
-        stage('Clean Nodes') {
+        stage('Clean Residuals') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Destruction des résidus Kubernetes pour forcer une installation propre..."
+                        # On s'assure qu'aucun vieux k8s ou k3s ne tourne
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
-                            systemctl stop kubelet || true
-                            kubeadm reset -f || true
-                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d /opt/cni/bin /var/lib/cni /var/run/calico /etc/ssl/etcd
-                            rm -f /usr/local/bin/kubectl /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/bin/kubectl
-                            rm -rf /root/.kube /home/ubuntu/.kube /home/baltroo/.kube
-                            ip link delete cni0 || true
-                            ip link delete flannel.1 || true
-                            if command -v fuser >/dev/null 2>&1; then fuser -k 6443/tcp 10250/tcp 2379/tcp || true; fi
+                            (k3s-uninstall.sh || true);
+                            (k3s-agent-uninstall.sh || true);
+                            kubeadm reset -f || true;
+                            systemctl stop kubelet || true;
+                            rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /etc/kubernetes /usr/local/bin/kubectl
                         "
                     """
                 }
             }
         }
-        
-        stage('Provision Kubernetes Cluster') {
+
+        stage('Provision K3s Master') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        # 1. Préparation d'un inventaire Kubespray PROPRE dans son propre dossier
-                        cd ${KUBESPRAY_DIR}
-                        rm -rf inventory/mycluster
-                        cp -rfp inventory/sample inventory/mycluster
-                        
-                        # On écrase le hosts.ini du sample par le tien
-                        cp ${WORKSPACE}/jenkins/hosts.ini inventory/mycluster/hosts.ini
-        
-                        # 2. Nettoyage VRAIMENT total (on force le reset kubeadm avant)
-                        ${VENV_PATH}/bin/ansible all -i inventory/mycluster/hosts.ini -b -m shell -a "
-                            kubeadm reset -f || true;
-                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /usr/local/bin/kubectl /etc/cni/net.d /etc/ssl/etcd
+                        echo "Installation du Master K3s..."
+                        # On installe le master sans traefik pour gagner du temps/ressources (optionnel)
+                        ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
+                            curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--disable traefik --node-name master-node-01' sh -
                         "
-        
-                        # 3. Lancement de l'installation avec exclusion STRICTE du rôle remove_node
-                        # On utilise -t (tags) pour ne lancer que l'install et --skip-tags pour sécuriser
-                        ${VENV_PATH}/bin/ansible-playbook -i inventory/mycluster/hosts.ini \
-                            -b --become-user=root \
-                            cluster.yml \
-                            -e container_manager=containerd \
-                            -e kube_network_plugin=calico \
-                            --skip-tags="remove_node,drain,upgrade" \
-                            -e ignore_assert_errors=yes \
-                            -e reset_nodes=false
                     """
                 }
             }
         }
-        
+
+        stage('Provision K3s Workers') {
+            steps {
+                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                    script {
+                        // On récupère le TOKEN du master pour que les workers puissent joindre
+                        def k3sToken = sh(
+                            script: "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a 'cat /var/lib/rancher/k3s/server/node-token' | grep 'K10'",
+                            returnStdout: true
+                        ).trim().split('>>')[-1].trim()
+
+                        echo "Token récupéré : ${k3sToken}"
+
+                        // On installe les workers
+                        sh """
+                            ${VENV_PATH}/bin/ansible workers -i jenkins/hosts.ini -b -m shell -a "
+                                curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -
+                            "
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Verify Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Vérification de l'état des nœuds..."
+                        echo "Vérification finale..."
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "kubectl get nodes"
                     """
                 }
@@ -95,7 +91,6 @@ pipeline {
 
     post {
         always {
-            // Nettoyage du workspace Jenkins pour ne pas laisser de fichiers sensibles (clés, venv)
             cleanWs()
         }
     }
