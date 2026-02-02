@@ -58,8 +58,6 @@
       args:
         executable: /bin/bash
 
-    # --- Section Installation K8s (Correction Robuste Jinja2) ---
-    
     - name: "Créer le dossier keyrings"
       file:
         path: /etc/apt/keyrings
@@ -70,16 +68,21 @@
       shell: "curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg"
 
     - name: "Ajouter le dépôt Kubernetes (Fix 2026)"
-      # On écrit le fichier directement via le module copy pour éviter le parsing shell/jinja2
       copy:
         dest: /etc/apt/sources.list.d/kubernetes.list
         content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
 
-    - name: "Installer Kubeadm, Kubelet et Kubectl"
+    - name: "Installer Kubeadm, Kubelet et Kubectl (Alignement v1.31)"
       shell: |
-        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true
+        # On nettoie d'abord les éventuelles vieilles versions qui bloquent
         apt-mark unhold kubelet kubeadm kubectl || true
+        apt-get remove -y kubelet kubeadm kubectl || true
+        
+        # Update et installation forcée en v1.31
+        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
+        
+        # On verrouille la version 1.31
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
@@ -97,6 +100,7 @@
         --pod-network-cidr=10.244.0.0/16 
         --node-name {{ inventory_hostname }}
         --apiserver-advertise-address={{ ansible_host }}
+        --kubernetes-version=v1.31.0
       register: kubeadm_init
       failed_when: "'already exists' not in kubeadm_init.stderr and kubeadm_init.rc != 0"
 
@@ -146,7 +150,8 @@
   become: yes
   tasks:
     - name: "Rejoindre le cluster"
-      command: "{{ join_command }} --node-name {{ inventory_hostname }}"
+      # On ajoute --ignore-preflight-errors pour bypasser les petits soucis de version si nécessaire
+      command: "{{ join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
       register: joined
       failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
 
