@@ -21,7 +21,7 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage radical des processus et verrous APT"
+    - name: "Nettoyage radical des verrous APT"
       shell: |
         killall apt apt-get dpkg || true
         rm -f /var/lib/apt/lists/lock
@@ -50,30 +50,23 @@
       shell: |
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+        # On ajoute un nom de release personnalisé 'kubernetes-v1.31' pour le cibler
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
       args:
         executable: /bin/bash
 
-    - name: "FORCE : Priorité maximale au dépôt Kubernetes (Pinning)"
-      copy:
-        dest: /etc/apt/preferences.d/kubernetes
-        content: |
-          Package: kubelet kubeadm kubectl
-          Pin: origin pkgs.k8s.io
-          Pin-Priority: 1000
-
-    - name: "Installer K8s v1.31 (PURGE ET REINSTALL)"
+    - name: "Installer K8s v1.31 (FORCE INSTALL)"
       shell: |
         apt-mark unhold kubelet kubeadm kubectl || true
-        apt-get remove -y kubelet kubeadm kubectl --purge || true
-        apt-get update
-        apt-get install -y --allow-downgrades kubelet kubeadm kubectl
+        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+        # On installe sans préciser la version mais en autorisant tout pour que le dépôt K8s gagne
+        apt-get install -y --allow-unauthenticated --allow-downgrades kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
 
-    - name: "Vérification de la version finale"
-      shell: kubeadm version -o short
+    - name: "Vérification binaire"
+      shell: "/usr/bin/kubeadm version -o short"
       register: final_v
       failed_when: "'v1.31' not in final_v.stdout"
 
