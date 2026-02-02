@@ -180,3 +180,38 @@
     - name: Résultat console
       debug:
         var: final_status.stdout_lines
+        
+# ==============================================================================
+# PLAY 5 : Jonction des Workers au Master
+# ==============================================================================
+- name: Récupération de la commande de join sur le Master
+  hosts: master
+  become: yes
+  tasks:
+    - name: Générer la commande de join
+      command: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Créer une variable avec la commande de join
+      set_fact:
+        join_command: "{{ join_command_raw.stdout }}"
+
+- name: Jonction des Workers
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Vérifier si le Worker est déjà dans un cluster
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Joindre le cluster
+      # On n'exécute la commande que si le fichier kubelet.conf n'existe pas encore
+      command: "{{ hostvars[groups['master'][0]]['join_command'] }}"
+      when: not kubelet_conf.stat.exists
+      register: join_result
+
+    - name: Statut de la jonction
+      debug:
+        msg: "Le worker a rejoint le cluster avec succès"
+      when: join_result is changed
