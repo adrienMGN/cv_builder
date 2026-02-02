@@ -33,17 +33,18 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
+                        # 1. Nettoyage rapide des anciens fichiers qui perturbent la détection
+                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "rm -f /usr/local/bin/kubectl /usr/bin/kubectl /etc/kubernetes/admin.conf"
+        
+                        # 2. Execution de Kubespray
                         cd ${KUBESPRAY_DIR}
-                        
-                        # On utilise cluster.yml
-                        # On ajoute -e reset_nodes=false pour éviter qu'il tente de drainer
                         ${VENV_PATH}/bin/ansible-playbook -i ../jenkins/hosts.ini \
+                            --flush-cache \
                             -b --become-user=root \
-                            cluster.yml \
+                            ./cluster.yml \
                             -e container_manager=containerd \
                             -e kube_network_plugin=calico \
                             -e ignore_assert_errors=yes \
-                            -e reset_nodes=false \
                             -e skip_downloads=false
                     """
                 }
