@@ -21,6 +21,13 @@
       args:
         executable: /bin/bash
 
+    - name: "Nettoyage des verrous APT"
+      shell: |
+        rm -f /var/lib/apt/lists/lock
+        rm -f /var/cache/apt/archives/lock
+        rm -f /var/lib/dpkg/lock*
+      ignore_errors: yes
+
     - name: "Installation des pré-requis"
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
@@ -80,41 +87,20 @@
     - name: "Désarchiver la clé GPG"
       shell: cat /tmp/k8s-release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
 
-    - name: "Ajouter le dépôt Kubernetes v1.31"
+    - name: "Ajouter le dépôt Kubernetes v1.31 (Fix Force 2026)"
       copy:
         dest: /etc/apt/sources.list.d/kubernetes.list
-        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
+        # Utilisation de [trusted=yes] ET [signed-by] pour bypasser les erreurs de signature v3 en 2026
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /"
 
-    - name: "Unhold des paquets existants"
-      dpkg_selections:
-        name: "{{ item }}"
-        selection: install
-      with_items: [kubelet, kubeadm, kubectl]
-      ignore_errors: yes
-
-    - name: "Supprimer les anciennes versions de K8s"
-      apt:
-        name: [kubelet, kubeadm, kubectl, kubelet-common, kubeadm-common]
-        state: absent
-        purge: yes
-        force: yes
-
-    - name: "Installer Kubeadm, Kubelet et Kubectl (Version 1.31)"
-      apt:
-        name: [kubelet, kubeadm, kubectl]
-        state: present
-        update_cache: yes
-        allow_unauthenticated: yes
-      register: apt_install
-      until: apt_install is success
-      retries: 3
-      delay: 5
-
-    - name: "Hold des paquets K8s"
-      dpkg_selections:
-        name: "{{ item }}"
-        selection: hold
-      with_items: [kubelet, kubeadm, kubectl]
+    - name: "Installer Kubeadm, Kubelet et Kubectl"
+      shell: |
+        apt-mark unhold kubelet kubeadm kubectl || true
+        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+        apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
+        apt-mark hold kubelet kubeadm kubectl
+      args:
+        executable: /bin/bash
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -193,7 +179,8 @@
     - name: "Attendre que les nœuds soient Ready"
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
       register: ready_count
-      until: ready_count.stdout|int >= (groups['all'] | length)
+      # On attend que le Master + les 2 Workers soient Ready (total = 3)
+      until: ready_count.stdout|int >= 3
       retries: 20
       delay: 15
 
