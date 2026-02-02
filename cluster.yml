@@ -70,14 +70,15 @@
     - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
 
-    - name: Rafraîchir Kubeconfig (Correctif TLS)
-      shell: |
-        rm -rf $HOME/.kube
-        mkdir -p $HOME/.kube
-        cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
-        chown $(id -u):$(id -g) $HOME/.kube/config
-        # Purge du cache kubectl pour éviter l'erreur TLS
-        rm -rf $HOME/.kube/cache
+      - name: Rafraîchir Kubeconfig (Correctif TLS)
+            shell: |
+              rm -rf /home/ubuntu/.kube
+              mkdir -p /home/ubuntu/.kube
+              cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+              chown -R ubuntu:ubuntu /home/ubuntu/.kube
+              rm -rf /home/ubuntu/.kube/cache
+            args:
+              executable: /bin/bash
 
     - name: Attendre l'API Server
       wait_for:
