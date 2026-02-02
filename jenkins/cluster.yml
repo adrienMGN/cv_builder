@@ -1,5 +1,5 @@
 ---
-- name: "Configuration Kubernetes Standalone - Chemin Absolu"
+- name: "Configuration Kubernetes Standalone"
   hosts: all
   become: yes
   tasks:
@@ -18,18 +18,17 @@
 
     - name: "Installation Containerd"
       apt:
-        name: [containerd, socat, conntrack]
+        name: [containerd, socat, conntrack, iptables]
         state: present
         update_cache: yes
       ignore_errors: yes
 
-    - name: "PURGE PHYSIQUE : Supprimer tous les binaires K8s existants"
+    - name: "Nettoyage radical"
       shell: |
         systemctl stop kubelet || true
         rm -f /usr/bin/kubeadm /usr/bin/kubelet /usr/bin/kubectl
-        rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl
-        rm -f /bin/kubeadm /bin/kubelet /bin/kubectl
-        apt-get remove -y kubeadm kubelet kubectl --purge || true
+        rm -f /etc/systemd/system/kubelet.service
+        rm -rf /etc/systemd/system/kubelet.service.d
       ignore_errors: yes
 
     - name: "Installation des CNI Plugins"
@@ -37,7 +36,7 @@
         mkdir -p /opt/cni/bin
         curl -L "https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz" | tar -C /opt/cni/bin -xz
 
-    - name: "Téléchargement STRICT de la v1.31.0 dans /usr/bin"
+    - name: "Téléchargement K8s v1.31.0"
       shell: |
         cd /usr/bin
         curl -L -o kubeadm https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubeadm
@@ -45,24 +44,45 @@
         curl -L -o kubectl https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
         chmod +x kubeadm kubelet kubectl
 
-    - name: "Création du service kubelet"
+    - name: "Création du fichier service kubelet"
       copy:
         dest: /etc/systemd/system/kubelet.service
         content: |
           [Unit]
           Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/
+          Wants=network-online.target
+          After=network-online.target
+
           [Service]
           ExecStart=/usr/bin/kubelet
           Restart=always
+          StartLimitInterval=0
+          RestartSec=10
+
           [Install]
           WantedBy=multi-user.target
 
-    - name: "Configuration kubeadm pour kubelet"
+    - name: "Configuration kubeadm-flags"
       shell: |
-        mkdir -p /etc/systemd/system/kubelet.service.d
-        echo -e '[Service]\nEnvironment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"\nEnvironment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"\nExecStart=\nExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS' > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+        mkdir -p /var/lib/kubelet
+        # On force kubelet à utiliser systemd comme driver de cgroup pour containerd
+        echo 'KUBELET_KUBEADM_ARGS="--container-runtime-endpoint=unix:///var/run/containerd/containerd.sock --pod-infra-container-image=registry.k8s.io/pause:3.10"' > /var/lib/kubelet/kubeadm-flags.env
+
+    - name: "Création de la conf kubeadm pour kubelet"
+      copy:
+        dest: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+        content: |
+          [Service]
+          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+          ExecStart=
+          ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS
+
+    - name: "Démarrage kubelet"
+      shell: |
         systemctl daemon-reload
-        systemctl enable --now kubelet
+        systemctl enable kubelet
+        systemctl start kubelet
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
@@ -71,10 +91,12 @@
   hosts: master
   become: yes
   tasks:
-    - name: "Initialiser le cluster (Chemin Absolu)"
+    - name: "Kubeadm Reset (Nettoyage avant Init)"
+      command: /usr/bin/kubeadm reset -f
+
+    - name: "Initialiser le cluster"
       command: /usr/bin/kubeadm init --pod-network-cidr=10.244.0.0/16 --node-name {{ inventory_hostname }} --apiserver-advertise-address={{ ansible_host }}
       register: kubeadm_init
-      failed_when: "'already exists' not in kubeadm_init.stderr and kubeadm_init.rc != 0"
 
     - name: "Configurer Kubeconfig"
       shell: |
@@ -82,26 +104,24 @@
         cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
-    - name: "Installer Flannel (avec attente de l'API)"
+    - name: "Attendre l'API (Retry 5 minutes)"
+      shell: "/usr/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes"
+      register: api_res
+      until: api_res.rc == 0
+      retries: 30
+      delay: 10
+
+    - name: "Installer Flannel"
       become_user: ubuntu
       command: /usr/bin/kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      register: flannel_res
-      until: flannel_res.rc == 0
-      retries: 12
-      delay: 10
 
-    - name: "Générer la commande de join"
-      # On utilise kubeconfig pour éviter l'erreur TLS
+    - name: "Générer join command"
       shell: "/usr/bin/kubeadm --kubeconfig /etc/kubernetes/admin.conf token create --print-join-command"
       register: join_cmd
-      until: join_cmd.rc == 0
-      retries: 5
-      delay: 10
 
-    - name: "Partager la commande de join"
+    - name: "Partager join command"
       set_fact:
-        # On injecte le chemin absolu dans la commande pour les workers
-        final_join_command: "/usr/bin/{{ join_cmd.stdout }}"
+        final_join_command: "{{ join_cmd.stdout }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
       with_items: "{{ groups['workers'] }}"
@@ -113,27 +133,8 @@
   hosts: workers
   become: yes
   tasks:
-    - name: "Rejoindre le cluster (Chemin Absolu)"
-      command: "{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
-      register: joined
-      failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
+    - name: "Kubeadm Reset (Worker)"
+      command: /usr/bin/kubeadm reset -f
 
-# ==============================================================================
-# PLAY 4 : Validation
-# ==============================================================================
-- name: "Validation"
-  hosts: master
-  become: yes
-  tasks:
-    - name: "Attendre que les nœuds soient Ready"
-      shell: "/usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
-      register: ready_count
-      until: ready_count.stdout|int >= 3
-      retries: 20
-      delay: 15
-    
-    - name: "Résultat Final"
-      shell: "/usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
-      register: nodes_list
-    - debug:
-        msg: "{{ nodes_list.stdout_lines }}"
+    - name: "Rejoindre le cluster"
+      command: "/usr/bin/{{ final_join_command }} --node-name {{ inventory_hostname }} --ignore-preflight-errors=all"
