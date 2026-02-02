@@ -33,30 +33,26 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        # 1. Nettoyage radical des traces de l'ancien cluster sur TOUS les nœuds
-                        # On le fait avant de faire le 'cd', donc le chemin vers hosts.ini est direct
+                        # 1. Nettoyage VRAIMENT brutal (on vire même les dossiers de config réseau)
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
-                            kubeadm reset -f || true;
-                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d /usr/local/bin/kubectl /usr/local/bin/kubeadm /usr/bin/kubectl /root/.kube /home/ubuntu/.kube /home/baltroo/.kube;
-                            ip link delete cni0 || true;
-                            ip link delete flannel.1 || true;
-                            systemctl stop kubelet || true
+                            rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d /usr/local/bin/kubectl /root/.kube /etc/ssl/etcd
                         "
         
-                        # 2. On entre dans le dossier Kubespray
+                        # 2. On entre dans Kubespray
                         cd ${KUBESPRAY_DIR}
         
-                        # 3. Execution de Kubespray avec nettoyage du cache Ansible
-                        # On utilise '../jenkins/hosts.ini' car on vient de faire un 'cd'
+                        # 3. Execution avec les flags d'anti-drain
                         ${VENV_PATH}/bin/ansible-playbook -i ../jenkins/hosts.ini \
-                            --flush-cache \
                             -b --become-user=root \
                             cluster.yml \
                             -e container_manager=containerd \
                             -e kube_network_plugin=calico \
                             -e ignore_assert_errors=yes \
                             -e skip_downloads=false \
-                            -e reset_nodes=false
+                            -e skip_nodes_with_no_br_netfilter=true \
+                            -e preinstall_selinux_state=disabled \
+                            -e kubeadm_enabled=true \
+                            -e "kube_override_hostname={{ inventory_hostname }}"
                     """
                 }
             }
