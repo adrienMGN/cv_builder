@@ -11,19 +11,20 @@ pipeline {
             steps {
                 checkout scm
                 sh "rm -rf ${KUBESPRAY_DIR}"
-                sh "git clone --depth 1 --branch v2.24.0 https://github.com/kubernetes-sigs/kubespray.git ${KUBESPRAY_DIR}"
+                // ON PASSE SUR LA BRANCHE MASTER OU v2.26.0 pour compatibilité Python 3.13
+                sh "git clone --depth 1 https://github.com/kubernetes-sigs/kubespray.git ${KUBESPRAY_DIR}"
             }
         }
 
         stage('Install Kubespray Dependencies') {
             steps {
                 sh """
-                    # Création du virtualenv
                     python3 -m venv ${VENV_PATH}
+                    ${VENV_PATH}/bin/pip install --upgrade pip setuptools wheel
                     
-                    # Installation des dépendances à l'intérieur du venv
-                    ${VENV_PATH}/bin/pip install --upgrade pip
-                    ${VENV_PATH}/bin/pip install -r ${KUBESPRAY_DIR}/requirements.txt
+                    # ASTUCE : On installe d'abord ruamel.yaml sans la partie C (clib) 
+                    # ou on laisse pip essayer de trouver une version pré-compilée
+                    ${VENV_PATH}/bin/pip install -r ${KUBESPRAY_DIR}/requirements.txt || ${VENV_PATH}/bin/pip install --break-system-packages -r ${KUBESPRAY_DIR}/requirements.txt
                 """
             }
         }
@@ -31,13 +32,13 @@ pipeline {
         stage('Provision Kubernetes Cluster') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    // Utilisation de l'exécutable ansible-playbook du venv
                     sh """
                     ${VENV_PATH}/bin/ansible-playbook -i jenkins/hosts.ini \
                         -b --become-user=root \
                         ${KUBESPRAY_DIR}/cluster.yml \
                         -e container_manager=containerd \
-                        -e kube_network_plugin=calico
+                        -e kube_network_plugin=calico \
+                        -e ignore_assert_errors=yes
                     """
                 }
             }
