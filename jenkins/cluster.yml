@@ -21,13 +21,24 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage radical des verrous APT"
+    - name: "Nettoyage radical des processus et verrous APT"
       shell: |
         killall apt apt-get dpkg || true
         rm -f /var/lib/apt/lists/lock
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
         dpkg --configure -a
+      ignore_errors: yes
+
+    - name: "PURGE TOTALE des anciennes versions (v1.29 etc)"
+      shell: |
+        apt-mark unhold kubelet kubeadm kubectl || true
+        apt-get remove -y kubelet kubeadm kubectl --purge || true
+        # On supprime les binaires manuellement au cas où ils viendraient d'ailleurs
+        rm -f /usr/bin/kubeadm /usr/bin/kubectl /usr/bin/kubelet
+        rm -f /usr/local/bin/kubeadm /usr/local/bin/kubectl /usr/local/bin/kubelet
+        # On désinstalle si c'est présent via snap
+        snap remove kubeadm kubelet kubectl || true
       ignore_errors: yes
 
     - name: "Installation des pré-requis"
@@ -46,15 +57,6 @@
       args:
         executable: /bin/bash
 
-    - name: "Nettoyage des anciens dépôts et binaires"
-      shell: |
-        apt-mark unhold kubelet kubeadm kubectl || true
-        apt-get remove -y kubelet kubeadm kubectl --purge || true
-        rm -rf /etc/apt/sources.list.d/kubernetes.list
-        rm -rf /etc/apt/keyrings/kubernetes-archive-keyring.gpg
-        rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl
-      ignore_errors: yes
-
     - name: "Installation du dépôt v1.31"
       shell: |
         mkdir -p /etc/apt/keyrings
@@ -63,14 +65,18 @@
       args:
         executable: /bin/bash
 
-    - name: "Installer K8s v1.31 (VERSION CIBLÉE)"
-      # !unsafe est CRUCIAL ici pour protéger le caractère *
+    - name: "Installer K8s v1.31 (FORCE)"
       shell: !unsafe |
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
         apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet=1.31* kubeadm=1.31* kubectl=1.31*
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
+
+    - name: "Vérification de la version installée"
+      shell: kubeadm version -o short
+      register: check_version
+      failed_when: "'v1.31' not in check_version.stdout"
 
 # ==============================================================================
 # PLAY 2 : Initialisation du Master
