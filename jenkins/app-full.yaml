@@ -13,6 +13,7 @@ spec:
       labels:
         app: mongo
     spec:
+      nodeName: master-node-01
       containers:
       - name: mongo
         image: mongo:7
@@ -47,6 +48,7 @@ spec:
       labels:
         app: backend
     spec:
+      nodeName: master-node-01
       containers:
       - name: backend
         image: 100.77.150.49:5000/cv-backend:latest
