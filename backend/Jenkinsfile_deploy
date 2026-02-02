@@ -1,0 +1,34 @@
+pipeline {
+    agent any
+    environment {
+        REGISTRY = "152.228.130.229:5000"
+        VITE_API_URL = "http://152.228.130.229:30001"
+    }
+    stages {
+        stage('Build & Tag Local') {
+            steps {
+                script {
+                    // Build Backend
+                    dir('backend') {
+                        sh "docker build -t ${REGISTRY}/cv-backend:latest ."
+                    }
+                    // Build Frontend
+                    sh "docker build --build-arg VITE_API_URL=${VITE_API_URL} -t ${REGISTRY}/cv-frontend:latest ."
+                }
+            }
+        }
+        stage('Push to Local Registry') {
+            steps {
+                sh "docker push ${REGISTRY}/cv-backend:latest"
+                sh "docker push ${REGISTRY}/cv-frontend:latest"
+            }
+        }
+        stage('Deploy to K8s') {
+            steps {
+                sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f k8s/app-full.yaml"
+                sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/frontend"
+                sh "kubectl --kubeconfig=/etc/kubernetes/admin.conf rollout restart deployment/backend"
+            }
+        }
+    }
+}
