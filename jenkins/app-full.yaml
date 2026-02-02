@@ -25,6 +25,7 @@ metadata:
 spec:
   ports:
     - port: 27017
+      targetPort: 27017
   selector:
     app: mongo
 
@@ -46,7 +47,8 @@ spec:
     spec:
       containers:
       - name: backend
-        image: 152.228.130.229:5000/cv-backend:latest
+        # Utilisation de l'IP correcte du registre Jenkins/Docker
+        image: 100.77.150.49:5000/cv-backend:latest
         env:
         - name: MONGODB_URI
           value: "mongodb://mongo:27017/cvbuilder"
@@ -55,6 +57,7 @@ spec:
         - name: NODE_ENV
           value: "production"
         - name: ALLOWED_ORIGINS
+          # L'origine autorisée est l'URL que l'utilisateur tape dans son navigateur
           value: "http://152.228.130.229:30000"
         ports:
         - containerPort: 5000
@@ -70,7 +73,7 @@ spec:
   ports:
     - port: 5000
       targetPort: 5000
-      nodePort: 30001 # API sur IP_VPS:30001
+      nodePort: 30001 
 
 ---
 # --- FRONTEND ---
@@ -90,7 +93,8 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: 152.228.130.229:5000/cv-frontend:latest
+        # Utilisation de l'IP correcte du registre Jenkins/Docker
+        image: 100.77.150.49:5000/cv-frontend:latest
         ports:
         - containerPort: 80
 ---
@@ -105,4 +109,4 @@ spec:
   ports:
     - port: 80
       targetPort: 80
-      nodePort: 30000 # App sur IP_VPS:30000
+      nodePort: 30000
