@@ -157,13 +157,12 @@
         dest: /root/.kube/config
         remote_src: yes
 
-    # --- AJOUT ICI ---
-    - name: Attendre que l'API Server soit disponible (Port 6443)
+    - name: Attendre que l'API Server réponde (Port 6443)
       wait_for:
-        host: localhost
         port: 6443
-        delay: 10
-        timeout: 60
+        delay: 5
+        timeout: 300 # On augmente à 5 minutes pour laisser le temps au Master de respirer
+        state: started
 
     - name: Installer le plugin réseau Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
