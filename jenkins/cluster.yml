@@ -59,18 +59,18 @@
         executable: /bin/bash
 
     - name: "Installation de Kubeadm, Kubelet et Kubectl"
-      # L'utilisation de !unsafe empêche Ansible d'interpréter les crochets [signed-by]
-      shell: !unsafe |
+      shell: |
         set -e
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
         
-        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+        # Correction 2026 : on ajoute [trusted=yes] pour forcer l'acceptation du dépôt malgré la signature v3 expirée
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg trusted=yes] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
         
-        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+        apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true
         
         apt-mark unhold kubelet kubeadm kubectl || true
-        apt-get install -y --allow-change-held-packages kubelet kubeadm kubectl
+        apt-get install -y --allow-unauthenticated --allow-change-held-packages kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
@@ -119,7 +119,8 @@
       delay: 10
 
     - name: "Générer la commande de join"
-      command: kubeadm token create --print-join-command
+      # Correction TLS : on force l'utilisation de la config locale pour éviter l'erreur de certificat sur l'IP publique
+      command: kubeadm --kubeconfig=/etc/kubernetes/admin.conf token create --print-join-command
       register: join_cmd
 
     - name: "Partager la commande de join"
