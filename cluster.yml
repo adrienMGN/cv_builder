@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# PLAY 0 : Reset Total
+# PLAY 0 : Reset Total (Nettoyage de sécurité)
 # ==============================================================================
 - name: Reset complet du cluster
   hosts: all
@@ -31,7 +31,7 @@
         name: "{{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 2 : Préparation Système
+# PLAY 2 : Préparation Système & Containerd
 # ==============================================================================
 - name: Préparation des composants
   hosts: all
@@ -86,23 +86,29 @@
       until: api_check.rc == 0
       retries: 20
       delay: 10
-      # Cela va essayer toutes les 10 secondes pendant ~3 minutes max.
 
     - name: Installer Flannel
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
 
+    - name: Pause de stabilisation post-réseau (Laisse respirer le CPU)
+      pause:
+        seconds: 45
+
 # ==============================================================================
-# PLAY 4 : Join des Workers
+# PLAY 4 : Token et Join des Workers
 # ==============================================================================
 - name: Token et Join
   hosts: master
   become: yes
   tasks:
-    - name: Générer join command
+    - name: Générer join command (avec retries en cas de timeout)
       command: kubeadm token create --print-join-command
       register: join_command_raw
+      until: join_command_raw.rc == 0
+      retries: 5
+      delay: 10
 
-    - name: Partager la commande
+    - name: Partager la commande de jonction
       set_fact:
         join_cmd: "{{ join_command_raw.stdout }}"
 
@@ -114,7 +120,7 @@
       command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 5 : Validation
+# PLAY 5 : Validation Finale
 # ==============================================================================
 - name: Validation finale
   hosts: master
@@ -128,7 +134,7 @@
       delay: 30
       changed_when: false
 
-    - name: Statut final
+    - name: Afficher le statut final du cluster
       command: kubectl get nodes
       register: res
     - debug:
