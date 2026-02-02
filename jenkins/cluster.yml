@@ -119,4 +119,41 @@
 
     - name: Partager la commande de join avec les workers
       set_fact:
-        join_command: "{{ join_cmd.stdout
+        join_command: "{{ join_cmd.stdout }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      with_items: "{{ groups['workers'] }}"
+
+# ==============================================================================
+# PLAY 3 : Jonction des Workers
+# ==============================================================================
+- name: Jonction des Workers
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Rejoindre le cluster
+      command: "{{ join_command }} --node-name {{ inventory_hostname }}"
+      register: joined
+      failed_when: "'already exists' not in joined.stderr and joined.rc != 0"
+
+# ==============================================================================
+# PLAY 4 : Validation finale
+# ==============================================================================
+- name: Validation du Cluster
+  hosts: master
+  become: yes
+  tasks:
+    - name: Attendre que les nœuds soient Ready
+      shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
+      register: ready_count
+      until: ready_count.stdout|int >= (groups['all'] | length)
+      retries: 20
+      delay: 10
+
+    - name: Afficher l'état final des nœuds
+      command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
+      register: final_res
+
+    - name: Debug Status
+      debug:
+        msg: "{{ final_res.stdout_lines }}"
