@@ -1,21 +1,23 @@
 ---
 # ==============================================================================
-# PLAY 0 : Reset Total (Nettoyage de sécurité)
+# PLAY 0 : Reset Total (Nettoyage agressif pour réinstallation propre)
 # ==============================================================================
 - name: Reset complet du cluster
   hosts: all
   become: yes
   tasks:
-    - name: Forcer le reset kubeadm
+    - name: Nettoyage kubeadm et répertoires
       shell: |
         kubeadm reset -f || true
         systemctl stop kubelet || true
         systemctl stop containerd || true
+        ip link delete cni0 || true
+        ip link delete flannel.1 || true
         rm -rf /etc/cni/net.d /var/lib/cni/ /var/lib/kubelet/* /var/lib/etcd /etc/kubernetes/* /home/ubuntu/.kube
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration Système & DNS Fix
+# PLAY 1 : Configuration Système & Registre Local
 # ==============================================================================
 - name: Configuration Système
   hosts: all
@@ -24,9 +26,8 @@
     - name: Hostname et Correction /etc/hosts
       shell: |
         hostnamectl set-hostname {{ inventory_hostname }}
-        if ! grep -q "{{ inventory_hostname }}" /etc/hosts; then
-          echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
-        fi
+        sed -i '/127.0.1.1/d' /etc/hosts
+        echo "127.0.0.1 {{ inventory_hostname }}" >> /etc/hosts
       args:
         executable: /bin/bash
 
@@ -37,64 +38,75 @@
       args:
         executable: /bin/bash
 
-    - name: Configurer Containerd (SystemdCgroup)
+    - name: Configurer Containerd avec support Registre Local
       shell: |
         modprobe overlay && modprobe br_netfilter
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
+        # Activation SystemdCgroup
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+        # Ajout du registre local insecure (Port 5000 sur le Master)
+        sed -i '/\[plugins."io.containerd.grpc.v1.cri".registry.mirrors\]/a \        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."152.228.130.229:5000"]\n          endpoint = ["http://152.228.130.229:5000"]' /etc/containerd/config.toml
         systemctl restart containerd
         systemctl enable --now kubelet
+      args:
+        executable: /bin/bash
 
 # ==============================================================================
-# PLAY 3 : Initialisation du Master
+# PLAY 2 : Initialisation du Master (Dynamique)
 # ==============================================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Kubeadm Init
-      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --token abcdef.1234567890abcdef --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
+    - name: Kubeadm Init (Sans token statique)
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
+      register: kubeadm_init
 
-    - name: Calculer le CA Hash dynamiquement
-      shell: openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
-      register: dynamic_ca_hash
+    - name: Créer le répertoire .kube pour l'utilisateur ubuntu
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
 
-    - name: Configurer Kubeconfig et Flannel
-      shell: |
-        mkdir -p /home/ubuntu/.kube
-        cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
-        chown -R ubuntu:ubuntu /home/ubuntu/.kube
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      register: flannel_res
-      until: flannel_res.rc == 0
-      retries: 10
-      delay: 15
+    - name: Copier la config admin
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/ubuntu/.kube/config
+        remote_src: yes
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Installer Flannel (Réseau)
+      become_user: ubuntu
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+
+    - name: Générer la commande de join pour les workers
+      command: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Sauvegarder la commande de join dans un fait global
+      set_fact:
+        join_command: "{{ join_command_raw.stdout }}"
 
 # ==============================================================================
-# PLAY 4 : Jonction Workers
+# PLAY 3 : Jonction des Workers
 # ==============================================================================
 - name: Jonction Workers
   hosts: workers
   become: yes
   tasks:
-    - name: Pause de sécurité pour le Master
-      pause:
-        seconds: 20
-
-    - name: Rejoindre le cluster
-      command: >
-        kubeadm join 152.228.130.229:6443 
-        --token abcdef.1234567890abcdef 
-        --discovery-token-ca-cert-hash sha256:{{ hostvars[groups['master'][0]]['dynamic_ca_hash']['stdout'] }}
-        --node-name {{ inventory_hostname }}
-      register: join_res
-      until: join_res.rc == 0
-      retries: 5
-      delay: 20
+    - name: Rejoindre le cluster avec la commande dynamique
+      command: "{{ hostvars[groups['master'][0]]['join_command'] }} --node-name {{ inventory_hostname }}"
+      register: worker_join
+      until: worker_join.rc == 0
+      retries: 3
+      delay: 10
 
 # ==============================================================================
-# PLAY 5 : Validation Finale
+# PLAY 4 : Validation et Santé du Cluster
 # ==============================================================================
 - name: Validation
   hosts: master
@@ -104,12 +116,13 @@
       shell: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes | grep ' Ready ' | wc -l"
       register: nodes_ready
       until: nodes_ready.stdout|int == 3
-      retries: 30
+      retries: 20
       delay: 15
       changed_when: false
 
-    - name: Statut final (Affichage)
+    - name: Affichage final des noeuds
       command: "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
-      register: res
+      register: final_status
+    
     - debug:
-        var: res.stdout_lines
+        msg: "{{ final_status.stdout_lines }}"
