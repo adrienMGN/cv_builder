@@ -20,7 +20,19 @@
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Préparation Système (Bootstrap & Containerd)
+# PLAY 1 : Configuration des noms d'hôtes (Correctif pour éviter le doublon 'auto')
+# ==============================================================================
+- name: Unification des Hostnames
+  hosts: all
+  become: yes
+  tasks:
+    - name: Définir le nom d'hôte selon l'inventaire
+      hostname:
+        name: "{{ inventory_hostname }}"
+      # Cela changera 'auto' en 'master-node-01', 'worker-node-02', etc.
+
+# ==============================================================================
+# PLAY 2 : Préparation Système (Bootstrap & Containerd)
 # ==============================================================================
 - name: Préparation et installation des composants
   hosts: all
@@ -42,7 +54,7 @@
         - net.bridge.bridge-nf-call-ip6tables
         - net.ipv4.ip_forward
 
-    - name: Configurer Containerd avec SystemdCgroup (Crucial pour 2026)
+    - name: Configurer Containerd avec SystemdCgroup
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
@@ -64,14 +76,14 @@
         state: restarted
 
 # ==============================================================================
-# PLAY 2 : Initialisation du Master
+# PLAY 3 : Initialisation du Master
 # ==============================================================================
 - name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
     - name: Kubeadm Init
-      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
       args:
         creates: /etc/kubernetes/admin.conf
 
@@ -95,7 +107,7 @@
       delay: 15
 
 # ==============================================================================
-# PLAY 3 : Automatisation de la jonction des Workers
+# PLAY 4 : Automatisation de la jonction des Workers
 # ==============================================================================
 - name: Génération du Token sur le Master
   hosts: master
@@ -113,13 +125,13 @@
   hosts: workers
   become: yes
   tasks:
-    - name: Joindre le cluster
-      command: "{{ hostvars[groups['master'][0]]['join_cmd'] }}"
+    - name: Joindre le cluster (en forçant le nom unique)
+      command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
       args:
         creates: /etc/kubernetes/kubelet.conf
 
 # ==============================================================================
-# PLAY 4 : Vérification Finale
+# PLAY 5 : Vérification Finale
 # ==============================================================================
 - name: Statut du Cluster
   hosts: master
