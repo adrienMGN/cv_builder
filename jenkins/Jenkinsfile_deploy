@@ -52,7 +52,7 @@ pipeline {
                         script {
                             echo "Applying K8s manifests..."
                             // Ajout du flag --insecure-skip-tls-verify=true
-                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true apply -f k8s/app-full.yaml"
+                            sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true apply -f jenkins/app-full.yaml"
                             
                             echo "Restarting deployments..."
                             sh "kubectl --kubeconfig=${KUBECONFIG_PATH} --insecure-skip-tls-verify=true rollout restart deployment/frontend"
