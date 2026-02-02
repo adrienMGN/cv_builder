@@ -56,8 +56,8 @@ spec:
         - name: NODE_ENV
           value: "production"
         - name: ALLOWED_ORIGINS
-          # Assure-toi que cette IP est celle utilisée pour accéder au site
-          value: "http://100.120.92.90:30000"
+          # Remplace par l'IP que tu tapes dans ton navigateur pour voir le site
+          value: "http://100.120.92.90:30000,http://152.228.130.229:30000"
         - name: RESEND_API_KEY
           valueFrom:
             secretKeyRef:
