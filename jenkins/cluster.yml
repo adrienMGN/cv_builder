@@ -26,7 +26,6 @@
         name: [apt-transport-https, ca-certificates, curl, gnupg, conntrack, socat, containerd]
         state: present
         update_cache: yes
-      # En 2026, on ignore les erreurs d'update global si des vieux dépôts ont des signatures V3 expirées
       ignore_errors: yes
 
     - name: "Configurer les modules Kernel"
@@ -60,23 +59,18 @@
         executable: /bin/bash
 
     - name: "Installation de Kubeadm, Kubelet et Kubectl"
-      shell: |
+      # L'utilisation de !unsafe empêche Ansible d'interpréter les crochets [signed-by]
+      shell: !unsafe |
         set -e
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
         
-        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
         
-        # Update ciblé pour éviter les erreurs sur les autres dépôts du système
         apt-get update -o Dir::Etc::sourcelist="sources.list.d/kubernetes.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
         
-        # On libère les paquets au cas où ils seraient déjà installés et bloqués (hold)
         apt-mark unhold kubelet kubeadm kubectl || true
-        
-        # Installation avec l'option pour modifier les paquets déjà bloqués
         apt-get install -y --allow-change-held-packages kubelet kubeadm kubectl
-        
-        # On verrouille à nouveau les versions
         apt-mark hold kubelet kubeadm kubectl
       args:
         executable: /bin/bash
@@ -89,7 +83,6 @@
   become: yes
   tasks:
     - name: "Initialiser le cluster avec Kubeadm"
-      # Utilisation de ansible_host pour que l'API server écoute sur l'IP publique du VPS
       command: >
         kubeadm init 
         --pod-network-cidr=10.244.0.0/16 
