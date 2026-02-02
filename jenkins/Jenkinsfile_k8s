@@ -33,12 +33,16 @@ pipeline {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                    ${VENV_PATH}/bin/ansible-playbook -i jenkins/hosts.ini \
-                        -b --become-user=root \
-                        ${KUBESPRAY_DIR}/cluster.yml \
-                        -e container_manager=containerd \
-                        -e kube_network_plugin=calico \
-                        -e ignore_assert_errors=yes
+                        # On se déplace dans le dossier kubespray pour que les chemins de rôles soient corrects
+                        cd ${KUBESPRAY_DIR}
+                        
+                        # On lance le playbook en pointant vers ton inventaire (qui est un niveau au-dessus)
+                        ${VENV_PATH}/bin/ansible-playbook -i ../jenkins/hosts.ini \
+                            -b --become-user=root \
+                            cluster.yml \
+                            -e container_manager=containerd \
+                            -e kube_network_plugin=calico \
+                            -e ignore_assert_errors=yes
                     """
                 }
             }
