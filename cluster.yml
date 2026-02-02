@@ -1,34 +1,38 @@
 ---
 # ==============================================================================
-# PLAY 0 : Nettoyage sélectif (On ne nettoie QUE les Workers)
+# PLAY 0 : Reset Total (Master & Workers)
 # ==============================================================================
-- name: Nettoyage des Workers uniquement
-  hosts: workers
+- name: Reset complet du cluster (Nettoyage de sécurité)
+  hosts: all
   become: yes
   tasks:
-    - name: Reset kubeadm sur les workers pour nettoyer les tentatives ratées
+    - name: Forcer le reset kubeadm
       shell: |
         kubeadm reset -f || true
+        systemctl stop kubelet || true
+        systemctl stop containerd || true
         rm -rf /etc/cni/net.d
         rm -rf /var/lib/cni/
         rm -rf /var/lib/kubelet/*
+        rm -rf /var/lib/etcd
+        rm -rf /etc/kubernetes/*
         ip link delete cni0 || true
         ip link delete flannel.1 || true
       failed_when: false
 
 # ==============================================================================
-# PLAY 1 : Configuration des noms d'hôtes
+# PLAY 1 : Configuration des Hostnames
 # ==============================================================================
 - name: Unification des Hostnames
   hosts: all
   become: yes
   tasks:
-    - name: Définir le nom d'hôte selon l'inventaire
+    - name: Définir le nom d'hôte
       hostname:
         name: "{{ inventory_hostname }}"
 
 # ==============================================================================
-# PLAY 2 : Préparation Système (Containerd & Kernel)
+# PLAY 2 : Préparation Système & Containerd
 # ==============================================================================
 - name: Préparation des composants
   hosts: all
@@ -50,14 +54,14 @@
         - net.bridge.bridge-nf-call-ip6tables
         - net.ipv4.ip_forward
 
-    - name: Configurer Containerd avec SystemdCgroup
+    - name: Configurer Containerd (SystemdCgroup)
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
       notify: Restart containerd
 
-    - name: Activer les services
+    - name: Démarrer les services
       service:
         name: "{{ item }}"
         state: started
@@ -71,52 +75,53 @@
         state: restarted
 
 # ==============================================================================
-# PLAY 3 : Vérification du Master (Déjà fait manuellement)
+# PLAY 3 : Initialisation du Master
 # ==============================================================================
-- name: Vérification du Master
+- name: Initialisation du Master
   hosts: master
   become: yes
   tasks:
-    - name: Kubeadm Init (Sauté si admin.conf existe déjà)
+    - name: Kubeadm Init
       command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --node-name {{ inventory_hostname }}
-      args:
-        creates: /etc/kubernetes/admin.conf
 
-    - name: Vérifier si Flannel est présent
-      command: kubectl get ds kube-flannel -n kube-flannel
-      register: flannel_check
-      ignore_errors: yes
+    - name: Configurer le dossier .kube pour Ansible/Root
+      shell: |
+        mkdir -p $HOME/.kube
+        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
 
-    - name: Installer Flannel si absent
+    - name: Attendre l'API Server
+      wait_for:
+        port: 6443
+        timeout: 60
+
+    - name: Installer Flannel
       command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      when: flannel_check.rc != 0
 
 # ==============================================================================
-# PLAY 4 : Token et Join des Workers
+# PLAY 4 : Join des Workers
 # ==============================================================================
-- name: Préparation du ralliement
+- name: Token et Join
   hosts: master
   become: yes
   tasks:
-    - name: Générer un nouveau token de join
+    - name: Générer join command
       command: kubeadm token create --print-join-command
       register: join_command_raw
 
-    - name: Stocker la commande
+    - name: Partager la commande
       set_fact:
         join_cmd: "{{ join_command_raw.stdout }}"
 
-- name: Jonction des Workers
+- name: Jonction Workers
   hosts: workers
   become: yes
   tasks:
-    - name: Rejoindre le cluster (Sauté si déjà joint)
+    - name: Rejoindre le cluster
       command: "{{ hostvars[groups['master'][0]]['join_cmd'] }} --node-name {{ inventory_hostname }}"
-      args:
-        creates: /etc/kubernetes/kubelet.conf
 
 # ==============================================================================
-# PLAY 5 : Attente de l'état final
+# PLAY 5 : Attente de l'état READY (100% stable)
 # ==============================================================================
 - name: Validation finale
   hosts: master
@@ -130,9 +135,8 @@
       delay: 30
       changed_when: false
 
-    - name: Afficher le cluster
+    - name: Afficher le résultat
       command: kubectl get nodes
       register: final_status
-
     - debug:
         var: final_status.stdout_lines
