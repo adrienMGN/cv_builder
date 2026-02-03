@@ -1,4 +1,5 @@
-# --- MONGODB ---
+---
+# --- MONGODB (Statique sur Master pour les données) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,12 +14,16 @@ spec:
       labels:
         app: mongo
     spec:
-      nodeName: master-node-01
+      nodeName: master-node-01 # On garde la DB ici pour l'instant
       containers:
       - name: mongo
         image: mongo:7
         ports:
         - containerPort: 27017
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
@@ -32,13 +37,13 @@ spec:
     app: mongo
 
 ---
-# --- BACKEND API ---
+# --- BACKEND API (Autoscalé) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
 spec:
-  replicas: 2
+  # Le HPA gérera le nombre de replicas entre 2 et 5
   selector:
     matchLabels:
       app: backend
@@ -47,7 +52,6 @@ spec:
       labels:
         app: backend
     spec:
-      nodeName: master-node-01
       containers:
       - name: backend
         image: 172.16.0.202:5000/cv-backend:latest
@@ -56,15 +60,18 @@ spec:
           value: "mongodb://mongo:27017/cvbuilder"
         - name: PORT
           value: "5000"
-        - name: NODE_ENV
-          value: "production"
-        - name: ALLOWED_ORIGINS
-          value: "https://cv-builder.skirshta.fr,http://100.120.92.90:30000,http://152.228.130.229:30000,http://vps-82ecffcd.vps.ovh.net:30000,http://172.16.0.202:30000"
         - name: RESEND_API_KEY
           valueFrom:
             secretKeyRef:
               name: backend-secrets
               key: RESEND_API_KEY
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "300m"
+            memory: "256Mi"
         ports:
         - containerPort: 5000
 ---
@@ -79,17 +86,15 @@ spec:
   ports:
     - port: 5000
       targetPort: 5000
-      nodePort: 30001 
+      nodePort: 30001
 
 ---
-# --- FRONTEND ---
+# --- FRONTEND (Autoscalé) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
 spec:
-  # ON GARDE 2 RÉPLICAS POUR LE FRONTEND
-  replicas: 3
   selector:
     matchLabels:
       app: frontend
@@ -101,6 +106,13 @@ spec:
       containers:
       - name: frontend
         image: 172.16.0.202:5000/cv-frontend:latest
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
         ports:
         - containerPort: 80
 ---
@@ -118,7 +130,7 @@ spec:
       nodePort: 30000
 
 ---
-# --- MONGO EXPRESS (Interface de gestion DB) ---
+# --- MONGO EXPRESS (Admin avec Password) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -141,11 +153,6 @@ spec:
         env:
         - name: ME_CONFIG_MONGODB_SERVER
           value: "mongo"
-        - name: ME_CONFIG_MONGODB_PORT
-          value: "27017"
-        - name: ME_CONFIG_MONGODB_ENABLE_ADMIN
-          value: "true"
-        # AUTHENTIFICATION DE L'INTERFACE
         - name: ME_CONFIG_BASICAUTH_USERNAME
           value: "admin"
         - name: ME_CONFIG_BASICAUTH_PASSWORD
@@ -163,3 +170,43 @@ spec:
     - port: 8081
       targetPort: 8081
       nodePort: 30005
+
+---
+# --- AUTOSCALING CONFIG (HPA) ---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
