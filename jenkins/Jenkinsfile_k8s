@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         VENV_PATH = "${WORKSPACE}/venv_ansible"
-        MASTER_IP = "100.120.92.90"
+        MASTER_IP = "172.16.0.12"
         // On récupère le secret Jenkins pour la clé API
         RESEND_KEY = credentials('RESEND_API_KEY_SECRET') 
     }
