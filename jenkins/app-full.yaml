@@ -120,7 +120,7 @@ spec:
 ## ADMINER
 
 ---
-# --- ADMINER ---
+# --- ADMINER AVEC MONGO SUPPORT ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -137,14 +137,16 @@ spec:
     spec:
       containers:
       - name: adminer
-        image: adminer:latest
+        # Cette version est plus complète pour les drivers
+        image: adminer:4.8.1
         ports:
         - containerPort: 8080
         env:
         - name: ADMINER_DEFAULT_SERVER
           value: "mongo"
-        - name: ADMINER_DESIGN
-          value: "pepa-lina" # Optionnel : un design plus moderne
+        # Note: Adminer lui-même ne gère pas le login "admin/admin123" pour l'interface
+        # Il gère le login vers la base de données. 
+        # Pour protéger l'accès à l'interface, on utilise Nginx (voir étape 2).
 ---
 apiVersion: v1
 kind: Service
