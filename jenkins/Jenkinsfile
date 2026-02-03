@@ -53,5 +53,11 @@ pipeline {
                 sh 'npm run build'
             }
         }
+        stage('Deploy App') {
+            steps {
+                echo "Lancement de la pipeline de déploiement..."
+                build job: 'deploy_pod', wait: false
+            }
+        }
     }
 }
