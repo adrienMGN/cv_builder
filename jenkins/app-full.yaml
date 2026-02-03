@@ -1,5 +1,5 @@
 ---
-# --- MONGODB (Statique sur Master pour les données) ---
+# --- MONGODB ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,7 +14,7 @@ spec:
       labels:
         app: mongo
     spec:
-      nodeName: master-node-01 # On garde la DB ici pour l'instant
+      nodeName: master-node-01 
       containers:
       - name: mongo
         image: mongo:7
@@ -37,13 +37,12 @@ spec:
     app: mongo
 
 ---
-# --- BACKEND API (Autoscalé) ---
+# --- BACKEND API ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
 spec:
-  # Le HPA gérera le nombre de replicas entre 2 et 5
   selector:
     matchLabels:
       app: backend
@@ -60,6 +59,10 @@ spec:
           value: "mongodb://mongo:27017/cvbuilder"
         - name: PORT
           value: "5000"
+        - name: NODE_ENV
+          value: "production"
+        - name: ALLOWED_ORIGINS
+          value: "https://cv-builder.skirshta.fr,http://172.16.0.202:30000"
         - name: RESEND_API_KEY
           valueFrom:
             secretKeyRef:
@@ -89,7 +92,7 @@ spec:
       nodePort: 30001
 
 ---
-# --- FRONTEND (Autoscalé) ---
+# --- FRONTEND ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -130,7 +133,7 @@ spec:
       nodePort: 30000
 
 ---
-# --- MONGO EXPRESS (Admin avec Password) ---
+# --- MONGO EXPRESS ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -172,7 +175,7 @@ spec:
       nodePort: 30005
 
 ---
-# --- AUTOSCALING CONFIG (HPA) ---
+# --- AUTOSCALING (HPA) ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
