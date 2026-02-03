@@ -59,7 +59,7 @@ spec:
         - name: NODE_ENV
           value: "production"
         - name: ALLOWED_ORIGINS
-          value: "http://100.120.92.90:30000,http://152.228.130.229:30000,http://vps-82ecffcd.vps.ovh.net:30000,http://172.16.0.202:30000"
+          value: "https://cv-builder.skirshta.fr,http://100.120.92.90:30000,http://152.228.130.229:30000,http://vps-82ecffcd.vps.ovh.net:30000,http://172.16.0.202:30000"
         - name: RESEND_API_KEY
           valueFrom:
             secretKeyRef:
