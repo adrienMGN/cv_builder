@@ -97,14 +97,15 @@ pipeline {
         }
 
         // --- CRÉATION DU SECRET SUR LE MASTER ---
+        // --- CRÉATION DU SECRET SUR LE MASTER ---
         stage('Setup K8s Secrets') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
                         echo "Création du secret backend-secrets sur le master..."
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
-                            kubectl delete secret backend-secrets --ignore-not-found && \
-                            kubectl create secret generic backend-secrets --from-literal=RESEND_API_KEY='${RESEND_KEY}'
+                            k3s kubectl delete secret backend-secrets --ignore-not-found && \
+                            k3s kubectl create secret generic backend-secrets --from-literal=RESEND_API_KEY='${RESEND_KEY}'
                         "
                     """
                 }
