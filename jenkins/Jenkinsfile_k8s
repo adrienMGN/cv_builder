@@ -3,7 +3,9 @@ pipeline {
 
     environment {
         VENV_PATH = "${WORKSPACE}/venv_ansible"
-        MASTER_IP = "100.120.92.90" 
+        MASTER_IP = "100.120.92.90"
+        // On récupère le secret Jenkins pour la clé API
+        RESEND_KEY = credentials('RESEND_API_KEY_SECRET') 
     }
 
     stages {
@@ -36,12 +38,18 @@ pipeline {
             }
         }
 
-        stage('Configure Registry Trust') {
+        // --- SOLUTION 2 : Configuration du Pare-feu (Réseau K3s) ---
+        stage('Configure Network & Registry') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
                     sh """
-                        echo "Configuration du registre privé sur tous les nœuds..."
+                        echo "Ouverture des ports K3s et config Registry..."
                         ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
+                            ufw allow 6443/tcp || true;
+                            ufw allow 8472/udp || true;
+                            ufw allow 10250/tcp || true;
+                            ufw allow 53/udp || true;
+                            ufw allow 53/tcp || true;
                             mkdir -p /etc/rancher/k3s && \
                             echo 'mirrors:
   \"100.77.150.49:5000\":
@@ -61,8 +69,6 @@ pipeline {
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
                             curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--disable traefik --node-name master-node-01' sh -
                         "
-                        
-                        echo "Correction des droits sur k3s.yaml pour permettre l'accès distant..."
                         ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "chmod 644 /etc/rancher/k3s/k3s.yaml"
                     """
                 }
@@ -79,8 +85,7 @@ pipeline {
                         ).trim()
                         
                         String k3sToken = extractToken(rawOutput)
-                        echo "Token extrait : ${k3sToken.substring(0, 10)}..."
-
+                        
                         sh """
                             ${VENV_PATH}/bin/ansible kube_node -i jenkins/hosts.ini -b -m shell -a "
                                 curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${k3sToken} sh -s - agent --node-name {{ inventory_hostname }}
@@ -91,11 +96,25 @@ pipeline {
             }
         }
 
-        stage('Verify Cluster') {
+        // --- CRÉATION DU SECRET SUR LE MASTER ---
+        stage('Setup K8s Secrets') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    sh "${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a 'kubectl get nodes'"
+                    sh """
+                        echo "Création du secret backend-secrets sur le master..."
+                        ${VENV_PATH}/bin/ansible master-node-01 -i jenkins/hosts.ini -b -m shell -a "
+                            kubectl delete secret backend-secrets --ignore-not-found && \
+                            kubectl create secret generic backend-secrets --from-literal=RESEND_API_KEY='${RESEND_KEY}'
+                        "
+                    """
                 }
+            }
+        }
+
+        stage('Deploy App') {
+            steps {
+                echo "Lancement de la pipeline de déploiement..."
+                build job: 'deploy_pod', wait: false
             }
         }
     }
