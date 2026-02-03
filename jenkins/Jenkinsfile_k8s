@@ -39,22 +39,24 @@ pipeline {
         }
 
         // --- SOLUTION 2 : Configuration du Pare-feu (Réseau K3s) ---
-       stage('Configure Network & Registry') {
-    steps {
-        // REMPLACE 'baltroo' PAR 'git-ssh-jenkins' ICI
-        sshagent(['git-ssh-jenkins', 'baloo']) {
-            sh """
-                ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
-                    mkdir -p /etc/rancher/k3s && \
-                    echo 'mirrors:
+      stage('Configure Network & Registry') {
+            steps {
+                // On utilise les IDs que Jenkins connaît déjà
+                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
+                    sh """
+                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
+                            mkdir -p /etc/rancher/k3s && \
+                            echo 'mirrors:
   \"172.16.0.202:5000\":
     endpoint:
       - \"http://172.16.0.202:5000\"' > /etc/rancher/k3s/registries.yaml
-                "
-            """
+                        "
+                    """
+                }
+            }
         }
-    }
-}
+
+
         stage('Install K3s Master') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
