@@ -40,26 +40,21 @@ pipeline {
 
         // --- SOLUTION 2 : Configuration du Pare-feu (Réseau K3s) ---
         stage('Configure Network & Registry') {
-            steps {
-                sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
-                    sh """
-                        echo "Ouverture des ports K3s et config Registry..."
-                        ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
-                            ufw allow 6443/tcp || true;
-                            ufw allow 8472/udp || true;
-                            ufw allow 10250/tcp || true;
-                            ufw allow 53/udp || true;
-                            ufw allow 53/tcp || true;
-                            mkdir -p /etc/rancher/k3s && \
-                            echo 'mirrors:
-  \"100.77.150.49:5000\":
+    steps {
+        sshagent(['baltroo', 'baloo']) {
+            sh """
+                echo "Configuration du registries.yaml sur tous les nœuds..."
+                ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
+                    mkdir -p /etc/rancher/k3s && \
+                    echo 'mirrors:
+  \"172.16.0.202:5000\":
     endpoint:
       - \"http://172.16.0.202:5000\"' > /etc/rancher/k3s/registries.yaml
-                        "
-                    """
-                }
-            }
+                "
+            """
         }
+    }
+}
 
         stage('Install K3s Master') {
             steps {
