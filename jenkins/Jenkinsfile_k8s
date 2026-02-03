@@ -39,11 +39,11 @@ pipeline {
         }
 
         // --- SOLUTION 2 : Configuration du Pare-feu (Réseau K3s) ---
-        stage('Configure Network & Registry') {
+       stage('Configure Network & Registry') {
     steps {
-        sshagent(['git-ssh-jenkins','baltroo', 'baloo']) {
+        // REMPLACE 'baltroo' PAR 'git-ssh-jenkins' ICI
+        sshagent(['git-ssh-jenkins', 'baloo']) {
             sh """
-                echo "Configuration du registries.yaml sur tous les nœuds..."
                 ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
                     mkdir -p /etc/rancher/k3s && \
                     echo 'mirrors:
@@ -55,7 +55,6 @@ pipeline {
         }
     }
 }
-
         stage('Install K3s Master') {
             steps {
                 sshagent(['k8s-nodes-ssh-key', 'master-specific-key']) {
