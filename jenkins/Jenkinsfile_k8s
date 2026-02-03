@@ -54,7 +54,7 @@ pipeline {
                             echo 'mirrors:
   \"100.77.150.49:5000\":
     endpoint:
-      - \"http://100.77.150.49:5000\"' > /etc/rancher/k3s/registries.yaml
+      - \"http://172.16.0.202:5000\"' > /etc/rancher/k3s/registries.yaml
                         "
                     """
                 }
