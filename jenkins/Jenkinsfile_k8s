@@ -41,7 +41,7 @@ pipeline {
         // --- SOLUTION 2 : Configuration du Pare-feu (Réseau K3s) ---
         stage('Configure Network & Registry') {
     steps {
-        sshagent(['baltroo', 'baloo']) {
+        sshagent(['git-ssh-jenkins','baltroo', 'baloo']) {
             sh """
                 echo "Configuration du registries.yaml sur tous les nœuds..."
                 ${VENV_PATH}/bin/ansible all -i jenkins/hosts.ini -b -m shell -a "
