@@ -38,6 +38,7 @@ kind: Deployment
 metadata:
   name: backend
 spec:
+  replicas: 2
   selector:
     matchLabels:
       app: backend
@@ -88,7 +89,7 @@ metadata:
   name: frontend
 spec:
   # ON GARDE 2 RÉPLICAS POUR LE FRONTEND
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: frontend
