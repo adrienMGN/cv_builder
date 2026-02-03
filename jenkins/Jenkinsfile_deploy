@@ -40,7 +40,7 @@ pipeline {
                 sshagent(['master-specific-key']) {
                     sh """
                         scp -o StrictHostKeyChecking=no baloo@172.16.0.12:/etc/rancher/k3s/k3s.yaml ${KUBECONFIG_PATH}
-                        sed -i 's/127.0.0.1/172.16.0.202/g' ${KUBECONFIG_PATH}
+                        sed -i 's/127.0.0.1/172.16.0.12/g' ${KUBECONFIG_PATH}
                         chmod 600 ${KUBECONFIG_PATH}
                     """
                 }
