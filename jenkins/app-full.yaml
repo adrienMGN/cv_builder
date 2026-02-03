@@ -117,46 +117,49 @@ spec:
       targetPort: 80
       nodePort: 30000
 
-## ADMINER
-
 ---
-# --- ADMINER AVEC MONGO SUPPORT ---
+# --- MONGO EXPRESS (Interface de gestion DB) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: adminer
+  name: mongo-express
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: adminer
+      app: mongo-express
   template:
     metadata:
       labels:
-        app: adminer
+        app: mongo-express
     spec:
       containers:
-      - name: adminer
-        # Cette version est plus complète pour les drivers
-        image: adminer:4.8.1
+      - name: mongo-express
+        image: mongo-express:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8081
         env:
-        - name: ADMINER_DEFAULT_SERVER
+        - name: ME_CONFIG_MONGODB_SERVER
           value: "mongo"
-        # Note: Adminer lui-même ne gère pas le login "admin/admin123" pour l'interface
-        # Il gère le login vers la base de données. 
-        # Pour protéger l'accès à l'interface, on utilise Nginx (voir étape 2).
+        - name: ME_CONFIG_MONGODB_PORT
+          value: "27017"
+        - name: ME_CONFIG_MONGODB_ENABLE_ADMIN
+          value: "true"
+        # AUTHENTIFICATION DE L'INTERFACE
+        - name: ME_CONFIG_BASICAUTH_USERNAME
+          value: "admin"
+        - name: ME_CONFIG_BASICAUTH_PASSWORD
+          value: "admin123"
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: adminer
+  name: mongo-express
 spec:
   type: NodePort
   selector:
-    app: adminer
+    app: mongo-express
   ports:
-    - port: 8080
-      targetPort: 8080
+    - port: 8081
+      targetPort: 8081
       nodePort: 30005
