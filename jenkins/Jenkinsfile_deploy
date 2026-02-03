@@ -4,7 +4,7 @@ pipeline {
     environment {
         // IP de la machine où tourne le conteneur Registry
         REGISTRY = "172.16.0.202:5000"
-        VITE_API_URL = "https://cv-builder.skirshta.fr/api"
+        VITE_API_URL = "https://cv-builder.skirshta.fr"
         // Chemin vers le kubeconfig récupéré du master
         KUBECONFIG_PATH = "${WORKSPACE}/kubeconfig-k3s"
     }
